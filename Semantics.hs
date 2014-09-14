@@ -1,11 +1,14 @@
+module Semantics where
+
+import Control. Applicative
+
 type Behaviour a = Time -> a
 type Event a = (Time,a)
 
 -- reader monad
-instance Monad (Behaviour a) -- reader monad
+instance Applicative (Behaviour a) -- reader
   pure = const
-  fmap = (.)
-  join f t = f t t
+  f <*> x = \t -> f t (x t))
 
 instance Monad (Event a) -- writer monad
   return a = (-inf,a)
@@ -29,7 +32,8 @@ whenJust f t = do 	t <- getTime
                     return (t2, fromJust $ f t2) 
 
 
--- magicAnalyze :: Behaviour Bool -> Behaviour Time
+magicAnalyze :: Behaviour Bool -> Behaviour Time
+magicAnalyze = undefined
 -- given a behaviour f and a time t1, find the time t2 , with
 -- t2 >= t1, such that t2 is the minimal time such that 
 -- such that f t2 is True (+ continuous time nastiness)
@@ -44,7 +48,8 @@ plan (t,n) = lift (runReader t n)
 
 -- change spacetime by planning IO a action at the given time
 toSpaceTimeChange :: IO a -> Time -> SpaceTime -> (SpaceTime, Event a) 
-
+toSpaceTimeChange = undefined
+{-
 type ClockVal = Double 
 
 clock :: Behaviour ClockVal
@@ -93,3 +98,4 @@ race a b = now $ whenJust $ fmap choose <$> toBehav a <*> toBehav b
 
   	choose (Just a, _)       = Left a
         choose (Nothing, Just b) = Right b
+-}

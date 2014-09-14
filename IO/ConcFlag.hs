@@ -1,4 +1,6 @@
-module ConcFlag where
+module IO.ConcFlag where
+
+import Control.Concurrent.MVar
 
 type Flag = MVar ()
 
@@ -7,9 +9,11 @@ type Flag = MVar ()
    if the flag is set, the reader has not seen the flag yet,
    and resetting the flag is idempotent. -}
 
+newFlag :: IO Flag
+newFlag = newEmptyMVar
 
 waitForSignal :: Flag -> IO ()
 waitForSignal = readMVar
 
-signal :: Flag -> IO Bool
-signal v = tryPutMVar v ()
+signal :: Flag -> IO ()
+signal v = tryPutMVar v () >> return ()
