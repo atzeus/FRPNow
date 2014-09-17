@@ -5,7 +5,10 @@ import qualified Graphics.UI.SDL as SDL
 import qualified Data.Set as Set
 import Graphics.UI.SDL.Keysym
 import Control.Applicative
+import Control.Concurrent
+import Control.Monad hiding (when)
 import Lib
+import Debug.Trace
 
 type Point     = (Double,Double) -- in pixels
 data MouseBtn  = MLeft | MMiddle | MRight deriving (Ord,Eq,Show)
@@ -19,22 +22,34 @@ main = do screen <- initSDL
           error "To lazy to clean up"
 
 mainFRP :: SDL.Surface -> Now s (Event s ()) 
-mainFRP screen =
+mainFRP screen = --return () >> return never
           do ev <- getEvents
-             --let mouse = toMousePos ev
-             --let leftClicks = toClicks SDL.ButtonLeft ev
-             --let leftUps    = toReleases SDL.ButtonRight ev
-             --let b = box mouse leftClicks leftUps (100,100)
+             mousePos <- liftB $ toMousePos ev
+             leftClicks <- liftB $ toClicks SDL.ButtonLeft ev
+             rightUps    <- liftB $toReleases SDL.ButtonRight ev
+             rup <- liftB $ nextES rightUps
+             (b,e) <- liftB $ runUntilM $ box mousePos leftClicks rup (100,100)
              --q <- liftB $ quit ev
-             -- drawAll screen b
+             drawAll screen b
+
+             test ev mousePos
              return never
 
+
+test es b = loop
+  where loop   = do ev <- liftB $ nextES es
+                    v <- liftB $ b
+                    printState b 
+                    -- e <- liftB $ when (/= v) b
+                    planNow (fmap (const loop) ev)
+                    return ()
+
 drawAll :: SDL.Surface -> Behaviour s Box -> Now s ()
-drawAll screen b = loop where
+drawAll screen b =  loop where
   loop = do v <- liftB $ b
             act (drawBoxes screen [v])
             e <- liftB $ when (/= v) b
-            plan (fmap (const loop) e)
+            planNow (fmap (const loop) e)
             return ()
                 
              
@@ -48,53 +63,59 @@ initSDL = do  SDL.init [SDL.InitEverything]
 
 
 
-box :: Behaviour s Point -> EventStream s () -> EventStream s () -> Point ->  Behaviour s Box
-box mouse rdown lups p =
-  let rectMouse = normalize <$> Rect p <$> mouse
-      red = Color 1 0 0
-  in Box <$> rectMouse <*> pure red 
-
+box :: Behaviour s Point -> EventStream s () -> Event s () -> Point ->  UntilM Behaviour s Box ()
+box mouse ldown rup p =
+  do defineBox `untill` rup
+     Box r _ <- self
+     pure (Box r red) `untill` never
+     return ()
+  where 
+        defineBox = Box <$> rectMouse <*> pure red 
+        rectMouse = normalize <$> Rect p <$> mouse
+        red = Color 1 0 0 
 -- boxes :: EventStream s () -> EventStream s () -> Point ->  Behaviour s [Box]
 -- boxes mouse rdown lups = fmap (\x -> [x]) $ box mouse rdown lups (100,100) 
 
-
+{-
 quit :: EventStream s SDL.Event -> Behaviour s (Event s ())
 quit es = nextES $ fmap (const ()) $ filterES isQuit es where
   isQuit SDL.Quit = True
   isQuit _ = False
-
-toClicks :: SDL.MouseButton -> EventStream s SDL.Event -> EventStream s ()
-toClicks m es = fmap (const ()) $ filterES isClick es where
+-}
+toClicks :: SDL.MouseButton -> EventStream s SDL.Event -> StartEventStream s ()
+toClicks m es = fmap (mapES (const ())) $ filterES isClick es where
   isClick (SDL.MouseButtonDown _ _ me) | m == me = True
   isClick _ = False
 
-toReleases m es = fmap (const ()) $ filterES isRelease es where
+toReleases m es = fmap (mapES (const ())) $ filterES isRelease es where
   isRelease (SDL.MouseButtonUp _ _ me) | m == me = True
   isRelease _ = False
 
 
-toMousePos :: EventStream s SDL.Event -> Behaviour s Point
+
+toMousePos :: EventStream s SDL.Event -> StartBehaviour s Point
 toMousePos = foldES getMousePos (0,0)
-  where getMousePos p (SDL.MouseMotion _ _ x y) = (fromIntegral x, fromIntegral y)
+  where getMousePos p (SDL.MouseMotion x y _ _) = (fromIntegral x, fromIntegral y)
         getMousePos p _                         = p
 
 
 
 getEvents ::  Now s (EventStream s SDL.Event)
-getEvents = fmap ES loop where
+getEvents = loop where
  loop = do e <- act ioGetEvents
-           n <- plan (fmap (const loop) e)
+           n <- planNow (fmap (const loop) e)
            return (pure e `switch` n)
 
 
 ioGetEvents :: IO [SDL.Event]
-ioGetEvents = do h <- SDL.waitEventBlocking
+ioGetEvents = do h <- SDL.waitEvent
                  t <- loop
+                 -- putStrLn (show (h : t)) 
                  return (h : t)
   where loop = do h <- SDL.pollEvent 
                   case h of
                     SDL.NoEvent -> return []
-                    _       -> do t <- loop ; return (h : t)
+                    _       -> do t <- loop ;  return (h : t)
 
 
 getColor :: SDL.Surface -> Color -> IO SDL.Pixel
@@ -112,10 +133,11 @@ drawBox s (Box r c) =
      return ()
      
 drawBoxes s l = 
-  do  p <- getColor s (Color 0 0 0)
-      SDL.fillRect s (Just $ SDL.Rect 0 0 1200 1000) p
-      mapM_ (drawBox s) (reverse l)
-      SDL.flip s
+  do putStrLn "Drawing!"
+     p <- getColor s (Color 0 0 0)
+     SDL.fillRect s (Just $ SDL.Rect 0 0 1200 1000) p
+     mapM_ (drawBox s) (reverse l)
+     SDL.flip s
 
 
 toRect :: Rect -> SDL.Rect

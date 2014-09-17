@@ -13,7 +13,7 @@ newFlag :: IO Flag
 newFlag = newEmptyMVar
 
 waitForSignal :: Flag -> IO ()
-waitForSignal = readMVar
+waitForSignal = takeMVar
 
 signal :: Flag -> IO ()
 signal v = tryPutMVar v () >> return ()

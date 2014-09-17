@@ -25,11 +25,15 @@ switch b (ts,b2) t
 infixl 2 .@
 
 type SpaceTime = Behaviour World -- Time -> World -- Sausage
-type Now = ReaderMonad Time (StateMonad SpaceTime)   
+type Now = Time -> SpaceTime -> SpaceTime   
 
 whenJust :: Behaviour (Maybe a) -> Behaviour (Event a)
 whenJust f t = let t2 = magicAnalyze (fmap isJust f) t
                in return (t2, fromJust $ f t2) 
+
+plan :: Event (Behaviour a) -> Behaviour (Event a)
+plan (te,f) = \tb -> let t = max te tb
+                     in (t, f t)
 
 
 magicAnalyze :: Behaviour Bool -> Behaviour Time
@@ -43,12 +47,6 @@ liftBehaviour f = f <$> getTime
 
 act :: IO a -> Now (Event a)
 act  = toSpaceTimeChange 
-
-
-
-plan :: Event (Now a) -> Now (Event a)
-plan (t,n) = lift (runReader t n)
-
 
 
 -- change spacetime by planning IO a action at the given time
