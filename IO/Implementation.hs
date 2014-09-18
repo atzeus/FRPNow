@@ -10,11 +10,11 @@ import Control.Concurrent
 import Control.Applicative 
 import Control.Monad
 import Control.Monad.State.Lazy
-import Control.Monad.Fix
 import System.IO
 import TermM
 import IO.ConcFlag
 import IO.SingleWriteIORef
+import Control.Monad.Fix
 import System.Mem.Weak
 import Data.Maybe
 import Race
@@ -125,6 +125,14 @@ ejoin e = newEvent (Join e)
 watchRef :: SIORef a -> Event s a
 watchRef r = newEvent (WatchRef r)
 
+isNever :: Event s a ->  PIOM s Bool
+isNever e@(E r) = 
+   do getEv e
+      rv <- lift $ readIORef r
+      return (isNever rv)
+  where 
+    isNever (Oc _)         = False
+    isNever (ES _ Never) = True
 
 getEv :: Event s a -> PIOM s (Maybe a)
 getEv (E r) = 
@@ -143,23 +151,25 @@ getEv (E r) =
             do t <- curTime 
                if tu >= t 
                then return ()
-               else do ev <- update t e
+               else do 
+                       lift $ writeIORef r (ES t e)  -- prevent depending on yourself
+                       ev <- update t e 
                        lift $ writeIORef r ev
                        lift $ flattenRefs r
     update :: TimeStamp -> EventTerm s a -> PIOM s (EventState s a)
     update t e = case e of
         Never      -> return (ES maxBound Never)
-        Always a   -> printErr "Always" >> return (Oc a)
+        Always a   -> return (Oc a)
         FMap f ed  -> do v <- getEv ed
                          case v of
                           Just a  -> return (Oc (f a))
                           Nothing -> return (ES t e)
         Join ed    -> do v <- getEv ed
                          case v of
-                          Just e@(E rd) -> do rn <- lift $ readIORef rd
-                                              case rn of
-                                                Oc a -> return (Oc a)
-                                                _    -> return (ES t (SameAsE e))
+                          Just e2 -> do r <- getEv e2
+                                        case r of
+                                           Just a -> return (Oc a)
+                                           _      -> return (ES t (SameAsE e2))
                           Nothing -> return (ES t e)
         WatchRef w -> do v <- lift $ readSIORef w
                          case v of
@@ -233,7 +243,7 @@ newBehaviour t = unsafePerformIO $
       return (B r)
 
 getBehaviour :: Behaviour s a -> PIOM s a
-getBehaviour b =  getBehaviourAndConst b >>= return . fst
+getBehaviour b = getBehaviourAndConst b >>= return . fst
 
 getBehaviourAndConst :: Behaviour s a -> PIOM s (a, Bool)
 getBehaviourAndConst (B r) = 
@@ -248,24 +258,25 @@ getBehaviourAndConst (B r) =
         s <- lift $ readIORef r
         case s of
          BS tu e _  | tu < t -> 
-           do e' <- update t e
+           do 
+              e' <- update r t e   
               lift $ writeIORef r e'
               lift $ flattenRefs r
          _ -> return ()
 
-    update :: TimeStamp -> BehaviourTerm s a -> PIOM s (BehaviourState s a)
-    update t e = case e of
+    update :: IORef (BehaviourState s a) -> TimeStamp -> BehaviourTerm s a -> PIOM s (BehaviourState s a)
+    update r t e = case e of
         Hold   a   -> return (Constant a)
-        BBind m f   -> do (mv,mc) <- getBehaviourAndConst m
+        BBind m f   -> do mv <- getBehaviour m
                           let x = f mv
-                          (xv,xc) <- getBehaviourAndConst x
-                          case (mc, xc) of
-                           (True, True) -> return (Constant xv)
-                           (True,False) -> return (BS t (SameAsB x) xv)
-                           (False,_)    -> return (BS t e xv)
+                          v <- getBehaviour x
+                          return (BS t (BBind m f) v)
+                          
+        -- todo never switch == b
         Switch b ev -> do evv <- getEv ev
                           case evv of
-                           Just b' -> do bv <- getBehaviour b'
+                           Just b' -> do 
+                                         bv <- getBehaviour b'
                                          return (BS t (SameAsB b') bv)
                            Nothing -> do v <- getBehaviour b
                                          return (BS t e v)

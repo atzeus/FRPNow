@@ -5,24 +5,10 @@ module Lib where
 import IO.Implementation 
 import Race
 import Control.Applicative
-import Control.Monad hiding (when)
+import Control.Monad hiding (when,until)
 import TermM
 import Debug.Trace
-type StartBehaviour s a = Behaviour s (Behaviour s a)
-
-class BehaviourLike m where
-  plan :: Event s (m s a) -> m s (Event s a)
-  liftB :: Behaviour s a -> m s a
-
-instance BehaviourLike Behaviour where
-  plan = planBehaviour
-  liftB = id
- 
-instance BehaviourLike Now where
-  plan = planNow
-  liftB = liftBehaviour
-
-type BehaviourL m s = (Monad (m s), BehaviourLike m)
+import Prelude hiding (until)
 
 cur :: Event s a -> Behaviour s (Maybe a)
 cur e = pure Nothing `switch` fmap (pure . Just) e
@@ -30,125 +16,100 @@ cur e = pure Nothing `switch` fmap (pure . Just) e
 race :: Event s a -> Event s b -> Behaviour s (Event s (Race a b))
 race a b = whenJust $ combineMaybe <$> cur a <*> cur b
 
-when :: (a -> Bool) -> Behaviour s a -> Behaviour s (Event s a)
-when f b = whenJust $ choose <$> b where
-  choose x | f x = Just x
-           | otherwise = Nothing
+when :: Behaviour s Bool -> Behaviour s (Event s ())
+when b = whenJust $ choose <$> b where
+  choose True = Just ()
+  choose False = Nothing
 
 
--- event streams 
+data Until s x a 
+   = Done a
+   | Until (Behaviour s x) (Event s a)
 
-type EventStream s a = Behaviour s (Event s [a])
--- this is a bit tricky
---
--- always points to the next event of
--- of the results of all simultanious events
--- then switches to next simultanious events
--- hence is isomorphic to:
--- type EventStream s a = Event s (EHT s a)
--- data EHT a = a :| EventStream s a
--- but this does not have space leak...
+instance Functor (Until s x)     where fmap f m = m >>= return . f
+instance Applicative (Until s x) where pure = return ; f <*> x = do fv <- f ; xv <- x ; return (fv xv)
 
-nextES :: EventStream s a -> Behaviour s (Event s a)
-nextES a = fmap last <$> a
+instance Monad (Until s x) where
+  return = Done
+  Done x >>= f = f x
+  (Until b e) >>= f = Until (b `switch` be) ee
+    where fe = fmap (next . f) e
+          be = fe >>= fst
+          ee = fe >>= snd
 
-type StartEventStream s a = Behaviour s (EventStream s a)
+next :: Until s x a -> (Event s (Behaviour s x), Event s a)
+next (Done a)      = (never, pure a)
+next (Until b' e') = (pure b',e')
 
+class BehaviourLike m where
+  liftB :: Behaviour s a -> m s a
 
-emptyES :: EventStream s a
-emptyES = pure never                                              
+instance BehaviourLike Behaviour where
+  liftB = id
+ 
+instance BehaviourLike Now where
+  liftB = liftBehaviour
 
-singletonES :: Event s a -> EventStream s a
-singletonES a = onceES $ fmap (\x -> [x]) a
+class PlanMonad m where
+  plan :: Event s (m s a) -> m s (Event s a)
 
-onceES :: Event s [a] -> EventStream s a
-onceES a =  pure a
+instance PlanMonad Behaviour where
+  plan = planBehaviour
 
-
-
-mapES :: (a -> b) -> EventStream s a -> EventStream s b
-mapES f b = fmap (map f) <$> b
-
-
-type EventStreamM m s a b = m s (Event s [a], Event b)
-
-mergeEventStreams :: EventStream s a -> EventStream s a -> EventStream s a
-mergeEventStreams (ES l) (ES r) = ES loop where
- loop = 
-   do lh <- l
-      rh <- r
-      r <- race lh rh
-      pure (fmap raceToList r) `switch` fmap (const loop) r
-
-raceToList :: Race [a] [a] -> [a]
-raceToList (L a)     = a
-raceToList (R b)     = b
-raceToList (Tie a b) = a ++ b
+instance PlanMonad Now where
+  plan = planNow
 
 
-type YieldM m s x a = TermM (YieldPrim m s x) a
+-- same as Until, but also allow us to sample other behaviour using current time...
+runUntilMl m =  getBehaviour <$> runUntilM' m where
+  getBehaviour (Until b e) =  b
+runUntilM m = get <$> runUntilM' m
+  where get (Until b e) = (b,e)
 
-data YieldPrim m s x a where
-  Yield :: x -> YieldPrim m s x a
-  WaitFor :: Event s a -> YieldPrim m s x a
-  Lift  :: m s a -> UntilMPrim m s x a
+newtype UntilM m x s a = UntilM {runUntilM' :: m s (Until s x a) }
 
+instance (PlanMonad m, BehaviourLike m, Monad (m s)) => Functor (UntilM m x s)      where fmap f m = m >>= return . f
+instance (PlanMonad m, BehaviourLike m, Monad (m s)) => Applicative (UntilM m x s)  where pure = return ; f <*> x = do fv <- f ; xv <- x ; return (fv xv)
 
-runYieldM :: forall m s x a . BehaviourL m s => 
-             UntilM m s x a -> m s (Behaviour s x, Event s a)
-runYieldM t = handle (pure undefined) (pure ()) t
+instance (PlanMonad m, BehaviourLike m, Monad (m s)) => 
+         Monad (UntilM m x s) where
+  return = UntilM . return . Done
+  (UntilM m) >>= f = UntilM $
+    let f' = runUntilM' . f
+    in do mu <- m
+          case mu of
+           Done x -> f' x
+           Until b e -> do e' <- plan $ fmap f' e
+                           let fe = fmap next e'
+                           let be = fe >>= fst
+                           let ee = fe >>= snd
+                           return $ Until (b `switch` be) ee
 
-newtype EventStreamM m s a = EventM { runEventM :: m s (EventStream s x, Event s a) }
-instance BehaviourL m s => Monad (EventStreamM m s) where
-  return x = EventM (return $ (pure never, pure x))
-  (EventM m) >>= f = EventM $ 
-        do (s,e) <- m
-           e2 <- plan $ fmap (runEventM . f) e
-           let ee = e2 >>= snd
-           let es = fmap fst ee2
-           return (switchES s es, ee)
+instance (PlanMonad m, BehaviourLike m) =>  
+         BehaviourLike (UntilM m x) where
+  liftB b = UntilM $ liftB $ Done <$> b
 
 
 
+until :: Monad (m s) => Behaviour s x -> Event s a -> UntilM m x s a
+until b e = UntilM $ return (Until b e)
 
--- until monad ----
+untilb :: (PlanMonad m, BehaviourLike m, Monad (m s)) => Behaviour s x -> Behaviour s (Event s a) -> UntilM m x s a
+untilb b e = do ev <- liftB e; until b ev
 
-type UntilM m s x a = TermM (UntilMPrim m s x) a
--- needs deep embedding to do self
-data UntilMPrim m s x a where
-  Until :: Behaviour s x -> Event s a -> UntilMPrim m s x a
-  Lift  :: m s a -> UntilMPrim m s x a
-  Self  :: UntilMPrim m s x x
+untilbl :: (PlanMonad m, BehaviourLike m, Monad (m s)) => Behaviour s x -> Behaviour s (Event s a) -> UntilM m x s x
+untilbl b e = untilb b e >> liftB b
 
-untill b e = prim (Until b e)
-self  = prim Self
-liftUM l = prim (Lift l)
-
-runUntilM :: forall m s x a . BehaviourL m s => 
-             UntilM m s x a -> m s (Behaviour s x, Event s a)
-runUntilM t = handle (pure undefined) (pure ()) t
-  where 
-    handle :: Behaviour s x -> Event s () -> UntilM m s x a -> m s (Behaviour s x, Event s a)
-    handle prevB prevE t = 
-       case viewTermM t of 
-         Return x -> return (prevB, fmap (const x) prevE)
-         p :>>= f -> do (b,e) <- handlePrim p
-                        let eunit = fmap (const ()) e
-                        n <- plan $ fmap (handle b eunit . f) e
-                        let ee = n >>= snd
-                        let be = fmap fst n
-                        return (b `switch` be, ee) 
-     where
-      handlePrim :: UntilMPrim m s x v -> m s (Behaviour s x, Event s v)
-      handlePrim (Until b e) = return (b,e)
-      handlePrim (Lift m)    = do mv <- m
-                                  return (prevB, fmap (const mv) prevE)
-      handlePrim Self        = do e' <- liftB $ plan $ fmap (const prevB) prevE
-                                  return (prevB, e')
+untilB :: (PlanMonad m, BehaviourLike m, Monad (m s)) => Behaviour s x -> Behaviour s Bool -> UntilM m x s ()
+untilB b e = do ev <- liftB $ when e; until b ev
 
 
+type BehaviourEnd s x a = (Behaviour s x, Event s a)
+zipBE :: (a -> b -> b) -> BehaviourEnd s a x -> Behaviour s b -> Behaviour s b
+zipBE f (bx,e) b = f <$> bx <*> b `switch` fmap (const b) e
 
-
+(.:) :: BehaviourEnd s a x -> Behaviour s [a] -> Behaviour s [a]
+(.:) = zipBE (:)
 
 
 
@@ -198,9 +159,5 @@ instance Monad (BehaviourEnd s x) where
     in BE (b `switch` vb) ve
 
 
-zipBE :: (a -> b -> b) -> BehaviourEnd s a x -> Behaviour s b -> Behaviour s b
-zipBE f (BE bx e) b = f <$> bx <*> b `switch` fmap (const b) e
 
-(.:) :: BehaviourEnd s a x -> Behaviour s [a] -> Behaviour s [a]
-(.:) = zipBE (:)
 -}
