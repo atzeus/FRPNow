@@ -1,7 +1,7 @@
 {-# LANGUAGE ScopedTypeVariables, GADTs, TupleSections,GeneralizedNewtypeDeriving #-}
 
 module EventStream(
-      EventStream, nextES, nextESSimul, foldES, mapES, filterES, 
+      EventStream, nextES, nextESSimul, foldES, mapES, filterES, on, appOn, parList, foldESB, foldESp,
       EventStreamM, emit, waitEv, waitJust, wait, waitB, waitIO, liftES, runEventStreamM,
       Void, EventM,runEventM, 
       becomesJust,becomesTrue) where
@@ -48,9 +48,24 @@ nextESSimul es =  do e <- unwrap es
                                  Nothing -> return (h : l)
 
 
-foldES :: (a -> b -> a) -> a -> EventStream s b -> Behaviour s (Behaviour s a)
+
+foldESp :: (a -> b -> a) -> a -> EventStream s b -> Behaviour s (Behaviour s a)
+foldESp f = foldES (\x y -> return $ f x y)
+
+parList :: EventStream s (Behaviour s (BehaviourEnd s a x)) -> Behaviour s (Behaviour s [a])
+parList = foldESB startPar (pure []) where
+  startPar t h = do h' <- h
+                    return (h' .: t)
+
+
+foldES :: (a -> b -> Behaviour s a) -> a -> EventStream s b -> Behaviour s (Behaviour s a)
 foldES f i es = do e <- unwrap es
-                   return (foldESImpl f i e)
+                   foldESImpl f i e
+
+foldESB :: forall a b s. (Behaviour s a -> b -> Behaviour s (Behaviour s a)) -> Behaviour s a -> EventStream s b -> Behaviour s (Behaviour s a)
+foldESB f i es = do e <- unwrap es
+                    foldESBImpl f i e
+
 
 mapES :: (a -> b) -> EventStream s a -> EventStream s b
 mapES f es = ES $
@@ -61,6 +76,15 @@ filterES :: (a -> Bool) -> EventStream s a -> EventStream s a
 filterES f es = ES $
    do e <- unwrap es
       e' <- filterESImpl f e
+      wrapB e'
+
+on :: Behaviour s a -> EventStream s x -> EventStream s a
+on b = appOn (const <$> b)
+
+appOn :: Behaviour s (a -> b) -> EventStream s a -> EventStream s b
+appOn b es =  ES $
+   do e <- unwrap es
+      e' <- appOnImpl b e
       wrapB e'
 
 newtype EventStreamM m x s a = EM (EventStreamMImpl m x s a) deriving (Functor, Applicative, Monad)
@@ -101,10 +125,20 @@ mapESImpl :: (a -> b) -> EventStreamImpl s a -> EventStreamImpl s b
 mapESImpl f = fmap loop where
   loop (h :< t)  = f h :< fmap loop t
 
-foldESImpl :: (a -> b -> a) -> a -> EventStreamImpl s b -> Behaviour s a
-foldESImpl f = loop where
-  loop i e = pure i `switch` fmap nxt e
-    where nxt (h :< t) = loop (f i h) t
+foldESBImpl :: forall a b s. (Behaviour s a -> b -> Behaviour s (Behaviour s a)) -> Behaviour s a -> EventStreamImpl s b -> Behaviour s (Behaviour s a)
+foldESBImpl f i e = do s <- plan $ fmap (nxt i) e
+                       return (i `switch` s) where
+    nxt i (h :< t) = do fv <- f i h
+                        t' <- plan $ fmap (nxt fv) t
+                        return (fv `switch` t')
+
+
+foldESImpl :: forall a b s. (a -> b -> Behaviour s a) -> a -> EventStreamImpl s b -> Behaviour s (Behaviour s a)
+foldESImpl f i e = do s <- plan $ fmap (nxt i) e
+                      return (pure i `switch` s) where
+    nxt i (h :< t) = do fv <- f i h
+                        t' <- plan $ fmap (nxt fv) t
+                        return (pure fv `switch` t')
 
 
 filterESImpl :: forall s a. (a -> Bool) -> EventStreamImpl s a -> Behaviour s (EventStreamImpl s a)
@@ -115,7 +149,12 @@ filterESImpl f e = join <$> (plan $ fmap loop e) where
                  | otherwise = t'
 
 
-
+appOnImpl :: Behaviour s (a -> b) -> EventStreamImpl s a -> Behaviour s (EventStreamImpl s b)
+appOnImpl b es =  plan $ fmap nxt es
+  where nxt (h :< t) = do h' <- b <*> pure h
+                          t' <- plan $ fmap nxt t
+                          return (h' :< t')
+                        
 
 
 data Void 

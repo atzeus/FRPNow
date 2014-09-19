@@ -10,7 +10,7 @@ import Control.Monad hiding (when)
 import Lib
 import EventStream
 import Debug.Trace
-import Data.Set
+import Data.Set hiding (filter)
 import Prelude hiding (until)
 
 type Point     = (Double,Double) -- in pixels
@@ -47,11 +47,10 @@ boxes :: Behaviour s Point -> Behaviour s (Set MouseBtn) -> EventStream s SDL.Ev
 boxes mousePos mButsDown evs = do let es = filterES isLeftClick evs
                                   let es' = mapES (\(SDL.MouseButtonDown x y _) -> (fromIntegral x, fromIntegral y)) es
                                   let es2 = mapES (box mousePos mButsDown) es'
-                                  e <- foldES consBE (pure (pure [])) es2
-                                  join e
+                                  parList es2
                
 
- where isLeftClick (SDL.MouseButtonDown _ _ SDL.ButtonLeft) = True
+ where isLeftClick (SDL.MouseButtonDown _ _ SDL.ButtonRight) = True
        isLeftClick _ = False
 
 drawAll :: SDL.Surface -> Behaviour s [Box] -> EventM Now s ()
@@ -84,7 +83,7 @@ release m b = becomesTrue $ not <$> isDown m b
 
 box :: forall s. Behaviour s Point -> Behaviour s (Set MouseBtn) -> Point -> Behaviour s (BehaviourEnd s Box ())
 box mouse mouseDown p = runUntilM meat  where
-  meat = do Box r _ <- defineBox `untilbl` click MRight mouseDown
+  meat = do Box r _ <- defineBox `untilbl` release MRight mouseDown
             dragBox r
             return ()
   dragBox :: Rect -> UntilM Behaviour Box s ()
@@ -110,9 +109,8 @@ box mouse mouseDown p = runUntilM meat  where
     loop :: UntilM Behaviour Bool s ()
     loop =
        do pure False `untilb` click MLeft mouseDown
-          trace "Jaa" $ return ()
+          return ()
           r <- liftB $ mouseOver
-          trace "nee" $ return ()
           if r
           then pure True `untilB` (not <$> isDown MLeft mouseDown)
           else return ()
@@ -135,26 +133,8 @@ box mouse mouseDown p = runUntilM meat  where
 
 
 
--- boxes :: EventStream s () -> EventStream s () -> Point ->  Behaviour s [Box]
--- boxes mouse rdown lups = fmap (\x -> [x]) $ box mouse rdown lups (100,100) 
-
-{-
-quit :: EventStream s SDL.Event -> Behaviour s (Event s ())
-quit es = nextES $ fmap (const ()) $ filterES isQuit es where
-  isQuit SDL.Quit = True
-  isQuit _ = False
-
-
-
-toReleases m es = fmap (mapES (const ())) $ filterES isRelease es where
-  isRelease (SDL.MouseButtonUp _ _ me) | m == me = True
-  isRelease _ = False
-
-
--}
-
 toMouseButtonsDown :: EventStream s SDL.Event -> Behaviour s (Behaviour s (Set MouseBtn))
-toMouseButtonsDown = foldES updateSet empty where
+toMouseButtonsDown = foldESp updateSet empty where
   updateSet s (SDL.MouseButtonDown _ _ m) | Just m' <- toM m = insert m' s
   updateSet s (SDL.MouseButtonUp   _ _ m) | Just m' <- toM m = delete m' s
   updateSet s _                                              = s
@@ -165,7 +145,7 @@ toM SDL.ButtonRight   = Just MRight
 toM _             = Nothing
 
 toMousePos :: EventStream s SDL.Event -> Behaviour s (Behaviour s Point)
-toMousePos = foldES getMousePos (0.0,0.0)
+toMousePos = foldESp getMousePos (0.0,0.0)
   where getMousePos p (SDL.MouseMotion x y _ _) = (fromIntegral x, fromIntegral y)
         getMousePos p _                         = p
 
@@ -175,8 +155,11 @@ toMousePos = foldES getMousePos (0.0,0.0)
 getEvents ::  EventStreamM Now SDL.Event s ()
 getEvents = loop where
  loop = do r <- waitIO $ ioGetEvents
-           mapM_ emit r
-           loop
+           if filter (== SDL.Quit) r /= []
+           then return ()
+           else do mapM_ emit r
+                   loop
+
 
 
 ioGetEvents :: IO [SDL.Event]
