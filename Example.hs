@@ -126,7 +126,7 @@ initSDL = do  SDL.init [SDL.InitEverything]
 
 
 ioGetEvents :: IO [SDL.Event]
-ioGetEvents = do h <- SDL.waitEvent
+ioGetEvents = do h <- SDL.waitEventBlocking
                  t <- loop
                  return (h : t)
   where loop = do h <- SDL.pollEvent 

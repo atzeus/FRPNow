@@ -83,7 +83,9 @@ instance MonadFix (Now s) where
 ----------- Events implementation ------------------
 
 
-type TimeStamp = Int64 -- this is a big place!
+type TimeStamp = Int64 
+-- this is a big place! 1 update per microsecond
+-- means this will loop after 584942 years (which will cause breakage)
 
 data Event s a = E (IORef (EventState s a)) 
 
@@ -99,8 +101,8 @@ data EventTerm s a where
   Join           :: Event s (Event s a)      -> EventTerm s a
   WatchRef       :: SIORef a                 -> EventTerm s a
   WatchBehaviour :: Behaviour s (Maybe a)    -> EventTerm s a -- make root!
-  PlannedNow     :: Event s (Now s a)        -> EventTerm s a -- make root!!
   Planned        :: Event s (Behaviour s a)  -> EventTerm s a -- make root!!
+  PlannedNow     :: Event s (Now s a)        -> EventTerm s a -- make root!!
   SameAsE        :: Event s a                -> EventTerm s a
 
 
@@ -349,11 +351,13 @@ runTimeSteps e = loop where
             ev <- getEv e 
             case ev of
                 Just a -> return a
-                Nothing -> 
-                  do runRoots
-                     f <- getFlag 
-                     lift $ waitForSignal f
-                     loop
+                Nothing -> runRound >> loop
+
+runRound :: PIOM s ()
+runRound = 
+  do runRoots
+     f <- getFlag 
+     lift $ waitForSignal f
                  
 runRoots :: PIOM s ()
 runRoots = takeRoots >>= mapM_ tryRunRoot

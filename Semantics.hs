@@ -44,6 +44,8 @@ type Now = Behaviour (Future -> (a,Future))
 act :: IO a -> Now (Event a)
 act  = undefined
 
+runFRP :: Now (Event a) -> IO a
+runFRP = undefined
 
 
 

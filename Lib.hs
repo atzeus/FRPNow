@@ -28,7 +28,7 @@ when b = whenJust $ choose <$> b where
   choose False = Nothing
 
 appAt :: Behaviour s (a -> b) -> Event s a -> Behaviour s (Event s b)
-appAt b e = plan $ fmap (\x -> liftB b <*> pure x) e
+appAt b e = plan $ fmap (\x -> b <*> pure x) e
 
 (.@) :: Behaviour s a -> Event s x -> Behaviour s (Event s a)
 b .@ e = appAt (const <$> b) e
@@ -72,8 +72,10 @@ instance PlanMonad Now where
 
 
 -- same as Until, but also allow us to sample other behaviour using current time...
+
 runUntilMl m =  getBehaviour <$> runUntilM' m where
   getBehaviour (Until b e) =  b
+runUntilM :: Functor (m s) => UntilM m x s a -> m s (Behaviour s x, Event s a)
 runUntilM m = get <$> runUntilM' m
   where get (Until b e) = (b,e)
 
