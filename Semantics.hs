@@ -23,9 +23,6 @@ switch b (ts,b2) t
    | t < ts    = b t
    | otherwise = b2 t
 
-
-
-
 whenJust :: Behaviour (Maybe a) -> Behaviour (Event a)
 whenJust f t = let t2 = magicAnalyze (fmap isJust f) t
                in return (t2, fromJust $ f t2) 

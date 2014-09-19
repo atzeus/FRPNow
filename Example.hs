@@ -15,7 +15,7 @@ import Prelude hiding (until)
 
 main = do screen <- initSDL
           runNow (mainFRP screen)
-          putStrLn "Thank you for using SuperawesomeDraw!"
+          putStrLn "Thank you for using SuperawesomeDraw 0.1!"
           return ()
 
 mainFRP :: SDL.Surface -> Now s (Event s ()) 
@@ -134,15 +134,6 @@ ioGetEvents = do h <- SDL.waitEvent
                     SDL.NoEvent -> return []
                     _       -> do t <- loop ;  return (h : t)
 
-
-getColor :: SDL.Surface -> Color -> IO SDL.Pixel
-getColor s c = 
-     let fmt = SDL.surfaceGetPixelFormat s in
-     SDL.mapRGB fmt (con r) (con g) (con b)
-  where con d = round ( (d c) * 255.0)
-
-
-
 drawBox :: SDL.Surface -> Box -> IO ()
 drawBox s (Box r c) =
   do p <- getColor s c
@@ -185,6 +176,12 @@ data Color   = Color {  r :: Double, g :: Double, b :: Double} deriving (Eq,Show
 
 red = Color 1 0 0 
 green = Color 0 1 0
+
+getColor :: SDL.Surface -> Color -> IO SDL.Pixel
+getColor s c = 
+     let fmt = SDL.surfaceGetPixelFormat s in
+     SDL.mapRGB fmt (con r) (con g) (con b)
+  where con d = round ( (d c) * 255.0)
 
 data Box     = Box Rect Color deriving (Eq, Show)
 

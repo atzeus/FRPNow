@@ -126,8 +126,8 @@ isNever e@(E r) =
       rv <- lift $ readIORef r
       return (isNever rv)
   where 
-    isNever (Oc _)       = False
     isNever (ES _ Never) = True
+    isNever _       = False
 
 getEv :: Event s a -> PIOM s (Maybe a)
 getEv (E r) = 
@@ -160,14 +160,20 @@ updateE t e = case e of
     FMap f ed  -> do v <- getEv ed
                      case v of
                       Just a  -> return (Oc (f a))
-                      Nothing -> return (ES t e)
+                      Nothing -> do n <- isNever ed
+                                    if n 
+                                    then return (ES maxBound Never)
+                                    else return (ES t e)
     Join ed    -> do v <- getEv ed
                      case v of
                       Just e2 -> do r <- getEv e2
                                     case r of
                                        Just a -> return (Oc a)
                                        _      -> return (ES t (SameAsE e2))
-                      Nothing -> return (ES t e)
+                      Nothing -> do n <- isNever ed
+                                    if n 
+                                    then return (ES maxBound Never)
+                                    else return (ES t e)
     WatchRef w -> do v <- lift $ readSIORef w
                      case v of
                       Just a  -> return (Oc a)
@@ -175,21 +181,33 @@ updateE t e = case e of
     WatchBehaviour b -> do bv <- getBehaviour b
                            case bv of
                              Just a  -> return (Oc a)
-                             Nothing -> return (ES t e)
+                             Nothing -> do n <- isConstant b
+                                           if n 
+                                           then return (ES maxBound Never)
+                                           else return (ES t e)
     PlannedNow e2 -> do m <- getEv e2
                         case m of
                            Just (Now t) -> do a <- runPlanIO' t
                                               return (Oc a)
-                           Nothing -> return (ES t e)
+                           Nothing -> do n <- isNever e2
+                                         if n 
+                                         then return (ES maxBound Never)
+                                         else return (ES t e)
     Planned e2 -> do m <- getEv e2
                      case m of
                       Just b -> do a <- getBehaviour b
                                    return (Oc a)
-                      Nothing -> return (ES t e)
+                      Nothing -> do n <- isNever e2
+                                    if n 
+                                    then return (ES maxBound Never)
+                                    else return (ES t e)
     SameAsE e -> do ev <- getEv e
                     case ev of
                       Just a -> return (Oc a)
-                      _    -> return (ES t (SameAsE e))
+                      _    -> do n <- isNever e
+                                 if n 
+                                 then return (ES maxBound Never)
+                                 else return (ES t (SameAsE e))
 
 flattenRefsE :: IORef (EventState s a) -> IO ()
 flattenRefsE r = 
@@ -233,6 +251,14 @@ newBehaviour t = unsafePerformIO $
    do r <- newIORef (newBehaviourState t)
       return (B r)
 
+isConstant :: Behaviour s a ->  PIOM s Bool
+isConstant b@(B r) = 
+   do getBehaviour b
+      rv <- lift $ readIORef r
+      return (isConstant rv)
+  where 
+    isConstant (BS t _ _) = t == maxBound
+
 getBehaviour :: Behaviour s a -> PIOM s a
 getBehaviour (B r) = 
   do tryUpdateB r
@@ -255,13 +281,20 @@ updateB t e = case e of
     BBind m f   -> do mv <- getBehaviour m
                       let x = f mv
                       v <- getBehaviour x
-                      return (BS t (BBind m f) v)
+                      mc <- isConstant m
+                      if mc 
+                       then return (BS t (SameAsB x) v)
+                       else return (BS t (BBind m f) v)
     Switch b ev -> do evv <- getEv ev
                       case evv of
                        Just b' -> do bv <- getBehaviour b'
                                      return (BS t (SameAsB b') bv)
                        Nothing -> do v <- getBehaviour b
-                                     return (BS t e v)
+                                     n <- isNever ev
+                                     if n
+                                     then return (BS t (SameAsB b) v)
+                                     else return (BS t e v)
+
     Plan ev -> do getEv ev
                   evv <- lift $ newEventIO $ Planned ev
                   addWeakRoot (RootE ev)

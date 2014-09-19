@@ -100,8 +100,6 @@ instance (PlanMonad m, BehaviourLike m) =>
          BehaviourLike (UntilM m x) where
   liftB b = UntilM $ liftB $ Done <$> b
 
-
-
 until :: Monad (m s) => Behaviour s x -> Event s a -> UntilM m x s a
 until b e = UntilM $ return (Until b e)
 
