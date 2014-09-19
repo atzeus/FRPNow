@@ -2,16 +2,22 @@
 
 module Lib where
 
-import IO.Implementation 
-import Race
+import Implementation 
 import Control.Applicative
 import Control.Monad hiding (when,until)
-import TermM
+
 import Debug.Trace
 import Prelude hiding (until)
 
 cur :: Event s a -> Behaviour s (Maybe a)
 cur e = pure Nothing `switch` fmap (pure . Just) e
+
+data Race a b = L a | R b | Tie a b
+
+combineMaybe (Just a) (Just b) = Just (Tie a b)
+combineMaybe (Just a) Nothing  = Just (L a)
+combineMaybe Nothing (Just b)  = Just (R b)
+combineMaybe Nothing Nothing = Nothing
 
 race :: Event s a -> Event s b -> Behaviour s (Event s (Race a b))
 race a b = whenJust $ combineMaybe <$> cur a <*> cur b
@@ -21,6 +27,11 @@ when b = whenJust $ choose <$> b where
   choose True = Just ()
   choose False = Nothing
 
+appAt :: Behaviour s (a -> b) -> Event s a -> Behaviour s (Event s b)
+appAt b e = plan $ fmap (\x -> liftB b <*> pure x) e
+
+(.@) :: Behaviour s a -> Event s x -> Behaviour s (Event s a)
+b .@ e = appAt (const <$> b) e
 
 data Until s x a 
    = Done a
@@ -105,59 +116,9 @@ untilB b e = do ev <- liftB $ when e; until b ev
 
 
 type BehaviourEnd s x a = (Behaviour s x, Event s a)
+
 zipBE :: (a -> b -> b) -> BehaviourEnd s a x -> Behaviour s b -> Behaviour s b
-zipBE f (bx,e) b = f <$> bx <*> b `switch` fmap (const b) e
+zipBE f (bx,e) b = (f <$> bx <*> b) `switch` fmap (const b) e
 
 (.:) :: BehaviourEnd s a x -> Behaviour s [a] -> Behaviour s [a]
 (.:) = zipBE (:)
-
-
-
-
-
-
-
-
-
-
-
-
-{-
-data EventStreamM s x a = ESM { stream :: EventStream s x, end :: Event s a }
-
-instance Monad (EventStreamM s x) where
-  return x = ESM emptyES (pure x)
-  -- this bind has a MAJOR problem because of possible multiple instances of switchES, use codensityT, see reflection without remorse
-  (ESM s e) >>= f = 
-    let fv = fmap f e
-        fes = fmap stream fv
-        fee = join $ fmap end fv
-    in ESM (switchES s fes) fee
-
-yield :: x -> EventStreamM s x ()
-yield a = ESM (singletonES (pure a)) (pure ())
-
-waitFor :: Event s a -> EventStreamM s x a
-waitFor e = ESM emptyES e
-                     
-
-parList :: EventStream s (BehaviourEnd s a ()) -> Behaviour s [a]
-parList = join . foldES (flip (.:)) (pure [])
-
-
-data BehaviourEnd s x a = BE { behaviour :: Behaviour s x, endEv :: Event s a }
-
-until :: Behaviour s x -> Event s a -> BehaviourEnd s x a
-until = BE
-
-instance Monad (BehaviourEnd s x) where
-  return x = BE (pure undefined) (pure x)
-  (BE b e) >>= f = 
-    let v = fmap f e
-        vb = fmap behaviour v
-        ve = join $ fmap endEv v
-    in BE (b `switch` vb) ve
-
-
-
--}

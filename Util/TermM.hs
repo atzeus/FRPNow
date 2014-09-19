@@ -1,6 +1,6 @@
 {-# LANGUAGE GADTs #-}
 
-module TermM(TermM, Binds(..),prim,viewTermM) where
+module Util.TermM(TermM, Binds(..),prim,viewTermM) where
 
 import Control.Applicative
 import Control.Monad

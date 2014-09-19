@@ -1,4 +1,4 @@
-module IO.SingleWriteIORef(SIORef, newSIORef, readSIORef, putSIORef) where
+module Util.SingleWriteIORef(SIORef, newSIORef, readSIORef, putSIORef) where
 
 import Data.IORef
 import Data.Unique

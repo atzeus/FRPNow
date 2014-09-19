@@ -1,7 +1,7 @@
 
 {-# LANGUAGE GADTs, TupleSections, Rank2Types,NamedFieldPuns, TypeSynonymInstances,FlexibleInstances,GeneralizedNewtypeDeriving #-}
 
-module IO.Implementation (TimeStamp,Event, never, seqE, Behaviour, switch, seqB, whenJust, planBehaviour, Now, liftBehaviour, act, planNow, runNow,printState) where
+module Implementation (TimeStamp,Event, never,  Behaviour, switch, whenJust, planBehaviour, Now, liftBehaviour, act, planNow, runNow,printState) where
 
 import System.IO.Unsafe
 import Data.IORef 
@@ -11,14 +11,14 @@ import Control.Applicative
 import Control.Monad
 import Control.Monad.State.Lazy
 import System.IO
-import TermM
-import IO.ConcFlag
-import IO.SingleWriteIORef
 import Control.Monad.Fix
 import System.Mem.Weak
 import Data.Maybe
-import Race
 import Debug.Trace
+
+import Util.TermM
+import Util.ConcFlag
+import Util.SingleWriteIORef
 
 --- public interface -----------
 
@@ -37,8 +37,6 @@ instance Monad (Event s) where
 never :: Event s a
 never = newEvent Never
 
-seqE :: Event s a -> Event s a
-seqE e = newEvent $ SeqE e
 
 instance Functor (Behaviour s)  where
   fmap f m = pure f <*> m
@@ -63,8 +61,6 @@ planNow p  = Now $ prim (PlanNow p)
 switch :: Behaviour s a -> Event s (Behaviour s a) -> Behaviour s a
 switch b e = newBehaviour $ Switch b e
 
-seqB :: Behaviour s a -> Behaviour s a
-seqB b = newBehaviour $ SeqB b
 
 printState :: Show a => Behaviour s a -> Now s ()
 printState b = Now $ prim (PrintState b)
@@ -97,27 +93,26 @@ data EventState s a
     | Oc a
 
 data EventTerm s a where
-  Never     ::                                  EventTerm s a
-  Always    :: a                             -> EventTerm s a
-  FMap      :: (a -> b) -> Event s a         -> EventTerm s b 
-  Join      :: Event s (Event s a)           -> EventTerm s a
-  WatchRef       :: SIORef a                      -> EventTerm s a
-  WatchBehaviour :: Behaviour s (Maybe a)    -> EventTerm s a -- watch it!
-  PlannedNow     :: Event s (Now s a)             -> EventTerm s a -- watch it!
-  Planned        :: Event s (Behaviour s a)  -> EventTerm s a 
-  SeqE      :: Event s a                     -> EventTerm s a
-  SameAsE   :: Event s a                     -> EventTerm s a
+  Never          ::                             EventTerm s a
+  Always         :: a                        -> EventTerm s a
+  FMap           :: (a -> b) -> Event s a    -> EventTerm s b 
+  Join           :: Event s (Event s a)      -> EventTerm s a
+  WatchRef       :: SIORef a                 -> EventTerm s a
+  WatchBehaviour :: Behaviour s (Maybe a)    -> EventTerm s a -- make root!
+  PlannedNow     :: Event s (Now s a)        -> EventTerm s a -- make root!!
+  Planned        :: Event s (Behaviour s a)  -> EventTerm s a -- make root!!
+  SameAsE        :: Event s a                -> EventTerm s a
 
 
 
-newEventState :: EventTerm s a -> EventState s a 
-newEventState t = ES minBound t
+initEventState :: EventTerm s a -> EventState s a 
+initEventState t = ES minBound t
 
 {-# NOINLINE newEvent #-}
-newEvent t = unsafePerformIO $newEventIO t 
+newEvent t = unsafePerformIO $ newEventIO t 
   
 
-newEventIO t =  do r <- newIORef (newEventState t)
+newEventIO t =  do r <- newIORef (initEventState t)
                    return (E r)
 
 ejoin e = newEvent (Join e)
@@ -131,83 +126,81 @@ isNever e@(E r) =
       rv <- lift $ readIORef r
       return (isNever rv)
   where 
-    isNever (Oc _)         = False
+    isNever (Oc _)       = False
     isNever (ES _ Never) = True
 
 getEv :: Event s a -> PIOM s (Maybe a)
 getEv (E r) = 
-  do tryUpdate r
+  do tryUpdateE r
      rv <- lift $ readIORef r
      return (getVal rv)
   where 
     getVal (Oc a) = Just a
     getVal _      = Nothing
 
-    tryUpdate r = 
-     do rv <- lift $ readIORef r
-        case rv of
-          Oc a    -> return ()
-          ES tu e -> 
-            do t <- curTime 
-               if tu >= t 
-               then return ()
-               else do 
-                       lift $ writeIORef r (ES t e)  -- prevent depending on yourself
-                       ev <- update t e 
-                       lift $ writeIORef r ev
-                       lift $ flattenRefs r
-    update :: TimeStamp -> EventTerm s a -> PIOM s (EventState s a)
-    update t e = case e of
-        Never      -> return (ES maxBound Never)
-        Always a   -> return (Oc a)
-        FMap f ed  -> do v <- getEv ed
-                         case v of
-                          Just a  -> return (Oc (f a))
-                          Nothing -> return (ES t e)
-        Join ed    -> do v <- getEv ed
-                         case v of
-                          Just e2 -> do r <- getEv e2
-                                        case r of
-                                           Just a -> return (Oc a)
-                                           _      -> return (ES t (SameAsE e2))
-                          Nothing -> return (ES t e)
-        WatchRef w -> do v <- lift $ readSIORef w
-                         case v of
-                          Just a  -> return (Oc a)
-                          Nothing -> return (ES t e)
-        WatchBehaviour b -> do bv <- getBehaviour b
-                               case bv of
-                                 Just a  -> return (Oc a)
-                                 Nothing -> return (ES t e)
-        PlannedNow e2 -> do m <- getEv e2
-                            case m of
-                               Just (Now t) -> do a <- runPlanIO' t
-                                                  return (Oc a)
-                               Nothing -> return (ES t e)
-        Planned e2 -> do m <- getEv e2
-                         case m of
-                          Just b -> do a <- getBehaviour b
-                                       return (Oc a)
-                          Nothing -> return (ES t e)
-        SeqE e    -> do m <- getEv e
-                        case m of
-                         Just a -> return (Oc a)
-                         Nothing -> addWeakWatch (WatchingE e) >> return (ES t (SameAsE e))
-        SameAsE e -> do ev <- getEv e
-                        case ev of
-                          Just a -> return (Oc a)
-                          _    -> return (ES t (SameAsE e))
+tryUpdateE :: IORef (EventState s a) -> PIOM s ()
+tryUpdateE r = 
+ do rv <- lift $ readIORef r
+    case rv of
+      Oc a    -> return ()
+      ES tu e -> 
+        do t <- curTime 
+           if tu >= t 
+           then return ()
+           else do -- if an event depends on its own occurance, it will not occur now 
+                   lift $ writeIORef r (ES t e) 
+                   ev <- updateE t e 
+                   lift $ writeIORef r ev
+                   lift $ flattenRefsE r
 
-    flattenRefs :: IORef (EventState s a) -> IO ()
-    flattenRefs r = 
-      do rv <- readIORef r
-         case rv of
-           ES _ (SameAsE (E r2)) -> 
-            do rv2 <- readIORef r2
-               case rv2 of
-                ES _ (SameAsE (E r3)) -> writeIORef r rv2 
-                _ -> return ()
-           _ -> return ()
+updateE :: TimeStamp -> EventTerm s a -> PIOM s (EventState s a)
+updateE t e = case e of
+    Never      -> return (ES maxBound Never)
+    Always a   -> return (Oc a)
+    FMap f ed  -> do v <- getEv ed
+                     case v of
+                      Just a  -> return (Oc (f a))
+                      Nothing -> return (ES t e)
+    Join ed    -> do v <- getEv ed
+                     case v of
+                      Just e2 -> do r <- getEv e2
+                                    case r of
+                                       Just a -> return (Oc a)
+                                       _      -> return (ES t (SameAsE e2))
+                      Nothing -> return (ES t e)
+    WatchRef w -> do v <- lift $ readSIORef w
+                     case v of
+                      Just a  -> return (Oc a)
+                      Nothing -> return (ES t e)
+    WatchBehaviour b -> do bv <- getBehaviour b
+                           case bv of
+                             Just a  -> return (Oc a)
+                             Nothing -> return (ES t e)
+    PlannedNow e2 -> do m <- getEv e2
+                        case m of
+                           Just (Now t) -> do a <- runPlanIO' t
+                                              return (Oc a)
+                           Nothing -> return (ES t e)
+    Planned e2 -> do m <- getEv e2
+                     case m of
+                      Just b -> do a <- getBehaviour b
+                                   return (Oc a)
+                      Nothing -> return (ES t e)
+    SameAsE e -> do ev <- getEv e
+                    case ev of
+                      Just a -> return (Oc a)
+                      _    -> return (ES t (SameAsE e))
+
+flattenRefsE :: IORef (EventState s a) -> IO ()
+flattenRefsE r = 
+  do rv <- readIORef r
+     case rv of
+       ES _ (SameAsE (E r2)) -> 
+        do rv2 <- readIORef r2
+           case rv2 of
+            ES _ (SameAsE (E r3)) -> writeIORef r rv2 
+            _ -> return ()
+       _ -> return ()
 
 
 ---------- Behaviour implementation ----------------------------
@@ -220,7 +213,6 @@ data BehaviourTerm s a where
   WhenJust :: Behaviour s (Maybe a)                     -> BehaviourTerm s (Event s a)
   Plan     :: Event s (Behaviour s a)                   -> BehaviourTerm s (Event s a)
   FixB     :: (a -> Behaviour s a)                      -> BehaviourTerm s a
-  SeqB     :: Behaviour s a                             -> BehaviourTerm s a
   SameAsB  :: Behaviour s a                             -> BehaviourTerm s a
 
 
@@ -228,7 +220,6 @@ data BehaviourState s a =
     BS { lastUpdateB :: TimeStamp,
          termB       :: BehaviourTerm s a,
          curVal     :: a }
-    | Constant a 
 
 
 data Behaviour s a = B (IORef (BehaviourState s a))
@@ -243,68 +234,57 @@ newBehaviour t = unsafePerformIO $
       return (B r)
 
 getBehaviour :: Behaviour s a -> PIOM s a
-getBehaviour b = getBehaviourAndConst b >>= return . fst
+getBehaviour (B r) = 
+  do tryUpdateB r
+     BS _ _ a <- lift $ readIORef r
+     return a
 
-getBehaviourAndConst :: Behaviour s a -> PIOM s (a, Bool)
-getBehaviourAndConst (B r) = 
-  do tryUpdate r
-     rv <- lift $ readIORef r
+tryUpdateB :: IORef (BehaviourState s a) -> PIOM s ()
+tryUpdateB r = 
+  do t <- curTime 
+     BS tu e _ <- lift $ readIORef r
+     if tu < t 
+     then do e' <- updateB t e   
+             lift $ writeIORef r e'
+             lift $ flattenRefsB r
+     else return ()
+          
+updateB :: TimeStamp -> BehaviourTerm s a -> PIOM s (BehaviourState s a)
+updateB t e = case e of
+    Hold   a   -> return (BS maxBound e a)
+    BBind m f   -> do mv <- getBehaviour m
+                      let x = f mv
+                      v <- getBehaviour x
+                      return (BS t (BBind m f) v)
+    Switch b ev -> do evv <- getEv ev
+                      case evv of
+                       Just b' -> do bv <- getBehaviour b'
+                                     return (BS t (SameAsB b') bv)
+                       Nothing -> do v <- getBehaviour b
+                                     return (BS t e v)
+    Plan ev -> do getEv ev
+                  evv <- lift $ newEventIO $ Planned ev
+                  addWeakRoot (RootE ev)
+                  return (BS t e evv)
+    WhenJust b -> do getBehaviour b
+                     ev <- lift $ newEventIO $ WatchBehaviour b
+                     addWeakRoot (RootE ev)
+                     return (BS t e ev)
+    FixB f    ->  do v <- mfix (getBehaviour . f)
+                     return (BS t (FixB f) v)
+    SameAsB b -> do bv <- getBehaviour b
+                    return (BS t e bv)
+
+flattenRefsB :: IORef (BehaviourState s a) -> IO ()
+flattenRefsB r = 
+  do rv <- readIORef r
      case rv of
-       BS _ _ a -> return (a, False)
-       Constant a  -> return (a, True)
-  where
-    tryUpdate r = 
-     do t <- curTime 
-        s <- lift $ readIORef r
-        case s of
-         BS tu e _  | tu < t -> 
-           do 
-              e' <- update r t e   
-              lift $ writeIORef r e'
-              lift $ flattenRefs r
-         _ -> return ()
-
-    update :: IORef (BehaviourState s a) -> TimeStamp -> BehaviourTerm s a -> PIOM s (BehaviourState s a)
-    update r t e = case e of
-        Hold   a   -> return (Constant a)
-        BBind m f   -> do mv <- getBehaviour m
-                          let x = f mv
-                          v <- getBehaviour x
-                          return (BS t (BBind m f) v)
-                          
-        -- todo never switch == b
-        Switch b ev -> do evv <- getEv ev
-                          case evv of
-                           Just b' -> do 
-                                         bv <- getBehaviour b'
-                                         return (BS t (SameAsB b') bv)
-                           Nothing -> do v <- getBehaviour b
-                                         return (BS t e v)
-        Plan ev -> do getEv ev
-                      evv <- lift $ newEventIO $ Planned ev
-                      addWeakWatch (WatchingE ev)
-                      return (BS t e evv)
-        WhenJust b -> do getBehaviour b
-                         ev <- lift $ newEventIO $ WatchBehaviour b
-                         addWeakWatch (WatchingE ev)
-                         return (BS t e ev)
-        FixB f    ->  do v <- mfix (getBehaviour . f)
-                         return (BS t (FixB f) v)
-        SeqB b    -> do v <- getBehaviour b
-                        addWeakWatch (WatchingB b)
-                        return (BS t (SameAsB b) v)
-        SameAsB b -> do bv <- getBehaviour b
-                        return (BS t e bv)
-    flattenRefs :: IORef (BehaviourState s a) -> IO ()
-    flattenRefs r = 
-      do rv <- readIORef r
-         case rv of
-           BS _ (SameAsB (B r2)) _ -> 
-            do rv2 <- readIORef r2
-               case rv2 of
-                BS _ (SameAsB (B r3)) _ -> do writeIORef r rv2 
-                _ -> return ()
-           _ -> return ()
+       BS _ (SameAsB (B r2)) _ -> 
+        do rv2 <- readIORef r2
+           case rv2 of
+            BS _ (SameAsB (B r3)) _ -> do writeIORef r rv2 
+            _ -> return ()
+       _ -> return ()
 
 ------------- Now implementation -----------------------
 
@@ -316,8 +296,10 @@ data PlanIOPrim s a where
     LiftB       :: Behaviour s a          -> PlanIOPrim s a
     Fix         :: (a -> Now s a)         -> PlanIOPrim s a
     Act         :: IO a                   -> PlanIOPrim s (Event s a)
+    PlanNow     :: Event s (Now s a)      -> PlanIOPrim s (Event s a)
+
+    -- debug thing
     PrintState  :: Show a => Behaviour s a -> PlanIOPrim s ()
-    PlanNow        :: Event s (Now s a)      -> PlanIOPrim s (Event s a)
 
 runNow :: (forall s. Now s (Event s a)) -> IO a
 runNow (Now p) = 
@@ -325,7 +307,7 @@ runNow (Now p) =
        evalStateT 
          (do e <- runPlanIO' p ;  runTimeSteps e)  
          (initState f)
-  where initState f = PIOState (0) [] f
+  where initState f = PIOState (minBound + 1) [] f
                  
 
 runTimeSteps :: Event s a -> PIOM s a
@@ -335,27 +317,27 @@ runTimeSteps e = loop where
             case ev of
                 Just a -> return a
                 Nothing -> 
-                  do runWatches
+                  do runRoots
                      f <- getFlag 
                      lift $ waitForSignal f
                      loop
                  
-runWatches :: PIOM s ()
-runWatches = takeWatches >>= mapM_ tryRunWatch
-    where tryRunWatch r@(WeakR w) = do m <- lift $ deRefWeak w
-                                       case m of
-                                        Just x -> runWatch x >>= reAdd r          
+runRoots :: PIOM s ()
+runRoots = takeRoots >>= mapM_ tryRunRoot
+    where tryRunRoot r@(WeakR w) = do m <- lift $ deRefWeak w
+                                      case m of
+                                        Just x -> runRoot x >>= reAdd r          
                                         Nothing -> return ()
-          tryRunWatch r@(StrongR w) = runWatch w >>= reAdd r
-          reAdd w True = addWatch w
+          tryRunRoot r@(StrongR w) = runRoot w >>= reAdd r
+          reAdd w True = addRoot w
           reAdd _ False = return ()
-          runWatch :: Watching s -> PIOM s Bool
-          runWatch (WatchingE e) = 
+          runRoot :: Root s -> PIOM s Bool
+          runRoot (RootE e) = 
             do ev <- getEv e
                case ev of
                     Just n  -> return False
                     Nothing -> return True
-          runWatch p@(WatchingB e) = getBehaviour e >> return True
+          runRoot p@(RootB e) = getBehaviour e >> return True
               
 
 
@@ -366,16 +348,16 @@ runPlanIO' t = case viewTermM t of
     Return a -> return a
     p :>>= f -> handlePrim p >>= runPlanIO' . f 
     where handlePrim :: PlanIOPrim s a -> PIOM s a
-          handlePrim (LiftB b) = getBehaviour  b
-          handlePrim (Fix f)   = mfix (runPlanIO' . getNow . f)
+          handlePrim (LiftB b)      = getBehaviour  b
+          handlePrim (Fix f)        = mfix (runPlanIO' . getNow . f)
           handlePrim (PrintState b) = getBehaviour b >> (lift $ printStateBB b)
-          handlePrim (Act m)   = startIO m
-          handlePrim (PlanNow e)  = plan' e
+          handlePrim (Act m)        = startIO m
+          handlePrim (PlanNow e)    = plan' e
 
 plan' :: Event s (Now s a) -> PIOM s (Event s a)
 plan' e = do let e' = newEvent (PlannedNow e)
              getEv e'
-             addStrongWatch (WatchingE e')
+             addStrongRoot (RootE e')
              return e'
 
 
@@ -384,11 +366,11 @@ data Ref a = StrongR a
            | WeakR (Weak a) 
 
 
-data Watching s = forall a. WatchingE (Event s a)
-                | forall a. WatchingB (Behaviour s a)
+data Root s = forall a. RootE (Event s a)
+                | forall a. RootB (Behaviour s a)
 
 data PIOState s = PIOState {     curTime' :: TimeStamp, -- write
-                                 watches' :: [Ref (Watching s)], -- write
+                                 roots  :: [Ref (Root s)], -- write
                                  flag'  :: Flag } -- read only
 
 type PIOM s = StateT (PIOState s) IO
@@ -410,24 +392,24 @@ curTime = get >>= return . curTime'
 getFlag :: PIOM s Flag
 getFlag = get >>= return .  flag' 
 
-takeWatches :: PIOM s [Ref (Watching s)]
-takeWatches =
+takeRoots :: PIOM s [Ref (Root s)]
+takeRoots =
  do b <- get
-    put (b{watches' = []})
-    return (watches' b)
+    put (b{roots = []})
+    return (roots b)
 
-addWatch :: Ref (Watching s) -> PIOM s ()
-addWatch w = 
+addRoot :: Ref (Root s) -> PIOM s ()
+addRoot w = 
   do b <- get 
-     put b { watches' = w : watches' b }
+     put b { roots = w : roots b }
 
-addStrongWatch :: Watching s -> PIOM s ()
-addStrongWatch w = addWatch (StrongR w)
+addStrongRoot :: Root s -> PIOM s ()
+addStrongRoot w = addRoot (StrongR w)
 
-addWeakWatch :: Watching s -> PIOM s ()
-addWeakWatch w = 
+addWeakRoot :: Root s -> PIOM s ()
+addWeakRoot w = 
   do ww <- lift $ mkWeak w w Nothing
-     addWatch (WeakR ww)
+     addRoot (WeakR ww)
 
 
 incTime :: PIOM s ()
@@ -511,7 +493,6 @@ showBB :: Show a => BehaviourState s a -> IO ()
 showBB b@ (BS u t v) = do showBs t
                           putStrLn ""
                           putStrLn (show v)
-showBB (Constant x)  = putStr $ "Const" ++ (show x)
 
 showBS :: BehaviourState s a -> IO ()
 showBS (BS u t _) = do --putStr "(" 
@@ -519,7 +500,6 @@ showBS (BS u t _) = do --putStr "("
                        --putStr "->"
                        showB t
                        --putStr ")"
-showBS (Constant _)  = putStr "Const"
 
 printStateBB :: Show a => Behaviour s a -> IO ()
 printStateBB (B r) = do v <- readIORef r

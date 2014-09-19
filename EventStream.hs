@@ -1,17 +1,24 @@
 {-# LANGUAGE ScopedTypeVariables, GADTs, TupleSections,GeneralizedNewtypeDeriving #-}
 
 module EventStream(
-      EventStream, nextES, nextESSimul, foldES, mapES, filterES, on, appOn, parList, foldESB, foldESp,
+      EventStream, repeatEv, nextES, nextESSimul, foldES, mapES, filterES, on, appOn, parList, foldESB, foldESp,
       EventStreamM, emit, waitEv, waitJust, wait, waitB, waitIO, liftES, runEventStreamM,
       Void, EventM,runEventM, 
       becomesJust,becomesTrue) where
 
-import IO.Implementation
+import Implementation
 import Lib
 import Data.Maybe
 import Control.Monad hiding (when)
 import Control.Applicative
-import TermM
+import Util.TermM
+
+repeatEv :: Behaviour s (Event s a) -> Behaviour s (EventStream s a)
+repeatEv b = fst <$> runEventStreamM loop where
+ loop = do ev <- liftB b
+           x <- waitEv ev
+           emit x
+           loop
 
 becomesTrue :: Behaviour s Bool -> Behaviour s (Event s ())
 becomesTrue b = becomesJust $ boolToJust <$> b
@@ -47,15 +54,12 @@ nextESSimul es =  do e <- unwrap es
                                  Just x -> getAll (h : l) x
                                  Nothing -> return (h : l)
 
-
-
 foldESp :: (a -> b -> a) -> a -> EventStream s b -> Behaviour s (Behaviour s a)
 foldESp f = foldES (\x y -> return $ f x y)
 
 parList :: EventStream s (Behaviour s (BehaviourEnd s a x)) -> Behaviour s (Behaviour s [a])
 parList = foldESB startPar (pure []) where
-  startPar t h = do h' <- h
-                    return (h' .: t)
+  startPar t h = (.: t) <$> h
 
 
 foldES :: (a -> b -> Behaviour s a) -> a -> EventStream s b -> Behaviour s (Behaviour s a)
