@@ -1,4 +1,4 @@
-{-# LANGUAGE  TypeSynonymInstances #-}
+{-# LANGUAGE  TypeSynonymInstances, TypeOperators #-}
 module Semantics where
 
 import Control.Applicative
@@ -6,41 +6,36 @@ import Control.Monad.Fix
 import Data.Maybe
 
 type Time = Double
+inf = 1/0
 
 type Behaviour a = Time -> a
-type Event a = (Time,a)
+data Event a = a :@ Time
 
--- reader monad
-instance Monad ((->) r) where
+
+instance Monad Event where -- writer monad
+  return a = a :@ (-inf)
+  (a :@ t) >>= f = b :@ max t t' where (b :@ t') = f a
+
+switch :: Behaviour a -> Event (Behaviour a) -> Behaviour a
+switch b (s :@ ts) t = if t < ts then b t else s t
+
+
+whenJust :: Behaviour (Maybe a) -> Behaviour (Event a)
+whenJust f t = let t' = undefined -- min { t' >= t | isJust (f t') }
+               in fromJust (f t') :@ t'
+
+{- reader monad
+   this monad & monadfix is listed in the
+   standard libraries as Monad ((->) r) 
+   the only difference is that r = time
+
+instance Monad Behaviour where
     return = const
     f >>= k = \ r -> k (f r) r
 
 instance MonadFix Behaviour where
-   mfix f = \r -> let a = f a r in a
-
-inf = 1/0
-
-instance Monad Event where -- writer monad
-  return a = (-inf,a)
-  (t,a) >>= f = (max t t2, a)
-                where (t2,a) = f a
-
-switch :: Behaviour a -> Event (Behaviour a) -> Behaviour a
-switch b (ts,b2) t 
-   | t < ts    = b t
-   | otherwise = b2 t
-
-when f t = undefined -- ( min { t' >= t | f t }, ())
-
-whenJust :: Behaviour (Maybe a) -> Behaviour (Event a)
-whenJust f t = let t2 = undefined -- min { t' >= t | isJust (f t) }
-               in return (t2, fromJust $ f t2) 
-
-plan :: Event (Behaviour a) -> Behaviour (Maybe a)
-plan (te,f) = \tb -> if tb >= te
-                     then Just (f tb)
-                     else Nothing
-
+   mfix f = \t -> let a = f a t in a
+-}
 
 data World
 
