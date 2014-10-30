@@ -1,4 +1,4 @@
-{-# LANGUAGE GADTs #-}
+{-# LANGUAGE GADTs, Rank2Types #-}
 
 module Util.TermM(TermM, Binds(..),prim,viewTermM) where
 
@@ -21,6 +21,15 @@ instance Applicative (TermM f) where
 instance Monad (TermM f) where
 	return = Ret
 	m >>= f  = Bnd m f
+
+type Bind f a v = (forall w. f w -> (w -> TermM f a) -> v)
+
+interpret :: Bind f a v -> (a -> v) -> TermM f a -> v
+interpret bind ret = int where
+  int (Ret a) = ret a
+  int (Bnd (Prim x)  f) = bind x f
+  int (Bnd (Ret x)   f) = int (f x)
+  int (Bnd (Bnd p q) r) = int (Bnd p (\x -> Bnd (q x) r))
 
 data Binds f a where
 	Return  :: a -> Binds f a

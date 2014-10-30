@@ -27,11 +27,11 @@ when b = whenJust $ choose <$> b where
   choose True = Just ()
   choose False = Nothing
 
-appAt :: Behaviour s (a -> b) -> Event s a -> Behaviour s (Event s b)
-appAt b e = plan $ fmap (\x -> b <*> pure x) e
+(<@>) :: Behaviour s (a -> b) -> Event s a -> Behaviour s (Event s b)
+b <@> e = plan $ fmap (\x -> b <*> pure x) e
 
 (.@) :: Behaviour s a -> Event s x -> Behaviour s (Event s a)
-b .@ e = appAt (const <$> b) e
+b .@ e = (const <$> b) <@> e
 
 data Until s x a 
    = Done a
@@ -42,8 +42,8 @@ instance Applicative (Until s x) where pure = return ; f <*> x = do fv <- f ; xv
 
 instance Monad (Until s x) where
   return = Done
-  Done x >>= f = f x
-  (Until b e) >>= f = Until (b `switch` be) ee
+  Done x    >>= f = f x
+  Until b e >>= f = Until (b `switch` be) ee
     where fe = fmap (next . f) e
           be = fe >>= fst
           ee = fe >>= snd

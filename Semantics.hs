@@ -1,4 +1,5 @@
 {-# LANGUAGE  TypeSynonymInstances, TypeOperators #-}
+
 module Semantics where
 
 import Control.Applicative
@@ -37,16 +38,44 @@ instance MonadFix Behaviour where
    mfix f = \t -> let a = f a t in a
 -}
 
-data World
+data SpaceTimeM a -- SpaceTime -> (SpaceTime,a)
 
-type Future = Behaviour World -- Time -> World -- Sausage
-type Now a = Behaviour (Future -> (a,Future))
+instance Monad SpaceTimeM where
 
-act :: IO a -> Now (Event a)
-act  = undefined
+type Now a = Behaviour (SpaceTimeM a)
+
+doAt :: IO a -> Now (Event a)
+--      IO a -> Behaviour (SpaceTimeM (Event a))
+doAt = undefined
+
+
+continue :: Now (Event (Now a)) -> Now a
+--   Behaviour (SpaceTimeM (Event (Behaviour (SpaceTimeM a))) --> Behaviour (SpaceTimeM a)
+continue n t = do n' :@ t' <- n t
+                  n' (max t' t)
 
 runFRP :: Now (Event a) -> IO a
+--        Behaviour (SpaceTimeM (Event a)) -> IO a
 runFRP = undefined
 
 
+--- Derived combinators
 
+step :: a -> Event (Behaviour a) -> Behaviour a
+step a s = pure a `switch` s
+
+toBehaviour :: Event (Behaviour a) -> Behaviour (Maybe a)
+toBehaviour e = Nothing `step` fmap (fmap Just) e
+
+plan :: Event (Behaviour a) -> Behaviour (Event a)
+plan = whenJust . toBehaviour
+
+
+---- Monad - applicative - functor  stuff
+
+instance Functor Event where
+  fmap f (a :@ t) = f a :@ t
+
+instance Applicative Event where
+  pure = return
+  f <*> g = do x <- f ; y <- g ; return (x y)

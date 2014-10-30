@@ -1,3 +1,7 @@
+module Behaviour where
+
+import Event
+
 import Control.Applicative
 import Control.Monad.Fix
 
@@ -15,7 +19,7 @@ instance Monad Behaviour where
 
 
 instance MonadFix Behaviour where
-  mfix f = let b = (a `Step` t) = f a in b 
+  mfix f = let b@(a `Step` t) = f a in b 
 
 -- That the above corresponds to the 
 -- semantics is not so obvious (to me)
@@ -46,8 +50,6 @@ whenJust (Just x  `Step` e) = pure x `Step` fmap whenJust e
 whenJust (Nothing `Step` e) = let e' = fmap whenJust e
                               in  (e' >>= getHead) `Step` (e' >>= getTail)
 
-plan :: Event (Behaviour a) -> Behaviour (Maybe a)
-plan e = return Nothing `switch` fmap (fmap Just) e
 
 
 -- external interface..,
@@ -62,44 +64,9 @@ sample e = loop where
 
 
 
+instance Functor Behaviour where
+  fmap f a = a >>= return . f
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-data Event a
-
-instance Functor Event
-instance Applicative Event
-instance Monad Event
-
-race :: Event a -> Event b -> Event (Either a b)
-race = undefined
-never :: Event a
-never = undefined
-
-
-
-
-instance Functor Behaviour where 
-  fmap f (a `Step` t) = f a `Step` fmap (fmap f) t
-
+instance Applicative Behaviour where
+  pure = return
+  f <*> g = do x <- f ; y <- g ; return (x y)
