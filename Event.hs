@@ -6,44 +6,45 @@ module Event where
 import Util.SingleWriteIORef
 import Data.IORef
 import Data.Maybe
+import TimeIVar
 import Control.Monad
 import Control.Applicative
-data Time = MinBound | Time Integer | MaxBound deriving (Eq, Ord)
 
 
-nextTime :: Time -> Time
-nextTime (Time t) = Time (t + 1)
+data Time s = MinBound | Time (TimeStamp s) | MaxBound deriving (Eq, Ord)
 
+instance Bounded (Time s) where
+  minBound = MinBound
+  maxBound = MaxBound  
 
-data Event p a where
-  Never   :: Event p a
-  Occured :: Time -> a -> Event p a
-  After   :: Time -> Event p a -> Event p a
-  BindE   :: Event p a -> (a -> Event p b) -> Event p b
-  Wait    :: p a -> Event p a
-  Race    :: Event p a -> Event p b -> Event p (Either a b)
+data Event s p a where
+  Occured :: Time s -> a -> Event s p a
+  After   :: Time s -> Event s p a -> Event s p a
+  BindE   :: Event s p a -> (a -> Event s p b) -> Event s p b
+  Wait    :: p a -> Event s p a
+  Race    :: Event s p a -> Event s p b -> Event s p (Either a b)
 
-waitOn :: p a -> Event p a
+waitOn :: p a -> Event s p a
 waitOn p = Wait p
 
-never = Occured MaxBound undefined
+never = Occured maxBound undefined
 race = Race
 wait = Wait
 
-instance Monad (Event p) where
-  return = Occured MinBound
+instance Monad (Event s p) where
+  return = Occured minBound
   (>>=)  = BindE
 
-makeAtTime :: Time -> a -> Event p a
+makeAtTime :: Time s -> a -> Event s p a
 makeAtTime t a = Occured t a
 
-getEvent :: Event p a -> Maybe a
+getEvent :: Event s p a -> Maybe a
 getEvent (Occured t a) = Just a
 getEvent _             = Nothing
 
-updateEvent :: forall p a. (forall a. p a -> Maybe a) -> Time -> Event p a -> Event p a
-updateEvent round now = loop MinBound where
-  loop :: Time -> Event p b -> Event p b
+updateEvent :: forall p a s. (forall a. p a -> Maybe a) -> Time s -> Event s p a -> Event s p a
+updateEvent round now = loop minBound where
+  loop :: Time s -> Event s p b -> Event s p b
   loop tm e = case e of
     BindE (BindE e f) g   -> loop tm (BindE e (\x -> f x >>= g))
     After tl (After tr e) -> loop tm (After (max tl tr) e)
@@ -65,10 +66,10 @@ updateEvent round now = loop MinBound where
 
 
 
-instance Functor (Event p) where
+instance Functor (Event s p) where
   fmap f a = a >>= return . f
 
-instance Applicative (Event p) where
+instance Applicative (Event s p) where
   pure = return
   f <*> g = do x <- f ; y <- g ; return (x y)
 
