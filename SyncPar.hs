@@ -3,20 +3,13 @@ module SyncPar where
 
 import Util.TermM
 import Util.ConcFlag
-import qualified Event as E
+import Control.Concurrent
 import Control.Monad
 import Control.Monad.Trans
-import Control.Concurrent
-import Util.ConcList
 import TimeIVar 
+import Event
 
-data EWait s a where
-  IOWait   :: TIVar s a  -> EWait s a
-  ForkWait :: TIVar s a  -> EWait s a 
-
-type Event s = E.Event s (EWait s) 
-
-start    :: IO a -> SyncPar s (Event s a)
+start  :: IO a -> SyncPar s (Event s a)
 start = prim . Start
 
 fork :: Event s (SyncPar s a) -> SyncPar s (Event s a)
@@ -35,49 +28,46 @@ type Req s = Either (IOReq s) (WaitReq s)
 runSyncPar :: (forall s .SyncPar s (Event s a)) -> IO a
 runSyncPar m = do f <- newFlag; withTimeStamper (start f) where
   start f stamper = do t <- endRound stamper
-                       (ev,l) <- runTIVarSupply $ initSyncPar (info t) t
+                       (ev,l) <- initSyncPar t
                        let (io,waits) = partitionEithers ev
                        mapM_ (startJob flag stamper) ios 
                        checkEv (info t) t ev (loop flag stamper waits) 
 
-  checkEv info time ev cont = 
-     let ev' = E.updateEvent info time e
-     in case E.getEvent e' of
-         Just x  -> return x
-         Nothing -> cont ev'
+  checkEv time ev cont = 
+     case ev `getAt` time of
+         Just (_,x)  -> return x
+         Nothing     -> cont ev'
 
   loop flag stamper waits ev  = 
      do waitForSignal flag
-        mdo l <- mapM (updateWait (info t) t) waits 
+        mapM (updateWait (info t) t) waits 
             t <- endRound stamper
         let (io,waits) = partitionEithers ev
         mapM_ (startJob flag stamper) ios 
         checkEv (info t) t ev (loop flag stamper waits) 
 
-  info t (IOWait   tv) = readTIVarAt tv t
-  info t (ForkWait tv) = readTIVarAt tv t
+
+  updateWait (WaitReq v e) time = 
+       case e `getAt` time of
+        Just (t,x) ->  
 
 
-type Info s = forall a. EWait s a -> Maybe a
-
-
-initSyncPar :: forall s a .Info s -> E.Time s ->  SyncPar s a -> TIVarSupply s (a,[Req s])
-initSyncPar info time = loop [] where 
-	loop :: forall a. [Req s] -> SyncPar s a -> TIVarSupply s (a,[Req s])
+initSyncPar :: forall a s. Time s -> SyncPar s a -> TIVarSupply s (a,[Req s])
+initSyncPar time = loop [] where 
+	loop :: forall a . [Req s] -> SyncPar s a -> TIVarSupply s (a,[Req s])
 	loop l e = case viewTermM e of
 	  Return x -> return (x,l)
 	  m :>>= f -> case m of
-		Start m -> do k <- makeTIVar
+		Start m -> do k <- newTIVar
 		              let w = Left $ IOReq k m
-		              loop (w : l) (f (E.waitOn (IOWait k)))
-		Fork e -> let e' = E.updateEvent info time e
-		          in case E.getEvent e' of
-		               Just x -> do (v, l') <- loop l x 
-		                            let ev = E.makeAtTime time v
-		                            loop l' (f ev)
-		               Nothing -> do k <- makeTIVar
+		              loop (w : l) (f (fromTIVar k))
+		Fork e -> case e `getAt` time of
+		               Just (t,x) -> do (v, l') <- loop l x 
+		                                let ev = makeEvent t v
+		                                loop l' (f ev)
+		               Nothing -> do k <- newTIVar
 		                             let w = Right $ WaitReq k e
-		                             loop (w:l) (f (E.waitOn (ForkWait k)))
+		                             loop (w:l) (f (fromTIVar k))
 
 
 startJob :: Flag -> TimeStamper s -> TIVar s a -> IO a -> IO ()

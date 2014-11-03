@@ -1,76 +1,55 @@
 
-{-# LANGUAGE  GADTs, ExistentialQuantification,TypeOperators,Rank2Types, ScopedTypeVariables #-}
+{-# LANGUAGE  TupleSections,GADTs, ExistentialQuantification,TypeOperators,Rank2Types, ScopedTypeVariables #-}
 
-module Event where
+module Event(Time, timeMinBound, fromStamp, Event, getAt, makeEvent, fromTIVar, race) where
 
-import Util.SingleWriteIORef
-import Data.IORef
-import Data.Maybe
 import TimeIVar
+import Data.IORef
+import System.IO.Unsafe
 import Control.Monad
-import Control.Applicative
-
 
 data Time s = MinBound | Time (TimeStamp s) | MaxBound deriving (Eq, Ord)
 
-instance Bounded (Time s) where
-  minBound = MinBound
-  maxBound = MaxBound  
+timeMinBound = MinBound
+fromStamp    = Time
 
-data Event s p a where
-  Occured :: Time s -> a -> Event s p a
-  After   :: Time s -> Event s p a -> Event s p a
-  BindE   :: Event s p a -> (a -> Event s p b) -> Event s p b
-  Wait    :: p a -> Event s p a
-  Race    :: Event s p a -> Event s p b -> Event s p (Either a b)
+newtype Event s a = Ev { getAt :: Time s -> Maybe (Time s, a) }
 
-waitOn :: p a -> Event s p a
-waitOn p = Wait p
+fromTIVar :: TIVar s a -> Event s a 
+fromTIVar v = Ev (memoInc convTime) where
+  convTime MinBound   = Nothing
+  convTime t@(Time s) = fmap (t,) (v `tvarAt` s)
+  convTime MaxBound   = undefined
 
-never = Occured maxBound undefined
-race = Race
-wait = Wait
+makeEvent :: Time s -> a -> Event s a
+makeEvent t a = Ev $ \t' -> if t <= t' then Just (t,a) else Nothing
 
-instance Monad (Event s p) where
-  return = Occured minBound
-  (>>=)  = BindE
+instance Monad (Event s) where
+  return x = Ev $ const $ Just (MinBound,x)
+  Ev m >>= f = Ev $ memoInc $ \t -> 
+       do (ta,a) <- m t 
+          (tb,b) <- getAt (f a) t
+          return (max ta tb, b)
 
-makeAtTime :: Time s -> a -> Event s p a
-makeAtTime t a = Occured t a
+race :: Event s a -> Event s b -> Event s (Either a b)
+race l r = Ev $ memoInc $ \t -> 
+      case (l `getAt` t, r `getAt` t) of
+        (Just (ta,a) , Just (tb,b)) 
+            | ta < tb    -> Just (ta, Left  a)
+            | otherwise  -> Just (tb, Right b)
+        (Just (ta,a), _) -> Just (ta, Left  a)
+        (_, Just (tb,b)) -> Just (tb, Right b)
+        _                -> Nothing
 
-getEvent :: Event s p a -> Maybe a
-getEvent (Occured t a) = Just a
-getEvent _             = Nothing
+-- only safe on events
 
-updateEvent :: forall p a s. (forall a. p a -> Maybe a) -> Time s -> Event s p a -> Event s p a
-updateEvent round now = loop minBound where
-  loop :: Time s -> Event s p b -> Event s p b
-  loop tm e = case e of
-    BindE (BindE e f) g   -> loop tm (BindE e (\x -> f x >>= g))
-    After tl (After tr e) -> loop tm (After (max tl tr) e)
-    Occured t a  -> Occured (max t tm) a
-    After t e    -> loop (max tm t) e
-    BindE e f    -> case loop tm e of
-                      Occured t a | t <= now -> loop (max tm t) (f a)
-                      e'          -> BindE e' f
-    Wait p       -> case round p of
-                        Just a  -> Occured (max tm now) a
-                        Nothing -> After tm (Wait p)
-    Race l r     -> case (loop tm l,loop tm r) of
-                         (Occured tl l, Occured tr r) 
-                             |  tr <= tl  -> Occured (max tm tr) (Right r)
-                             |  otherwise -> Occured (max tm tl) (Left  l)
-                         (_, Occured t r) | t <= now -> Occured (max tm t) (Right r)
-                         (Occured t l, _) | t <= now -> Occured (max tm t) (Left  l)
-                         (l',r')          -> After tm (Race l' r')
-
-
-
-instance Functor (Event s p) where
-  fmap f a = a >>= return . f
-
-instance Applicative (Event s p) where
-  pure = return
-  f <*> g = do x <- f ; y <- g ; return (x y)
+memoInc :: (Time s -> Maybe (Time s, a)) -> (Time s -> Maybe (Time s, a))
+memoInc f = unsafePerformIO $ liftM f' (newIORef Nothing) where
+  f' r t = unsafePerformIO $
+      do v <- readIORef r
+         case v of
+            Just (t',a) | t' <= t -> return $ Just (t',a)
+            _ -> let res = f t
+                 in writeIORef r res >> return res 
 
 
