@@ -4,21 +4,65 @@ import Event
 
 import Control.Applicative
 import Control.Monad.Fix
+import Control.Monad
+
+
+data Steps s a = Step { getHead :: a, getTail :: Event s (Steps s a) }
+
+switchS :: Steps s a -> Event s (Steps s a) -> Steps s a
+(h `Step` t) `switchS` e = h `Step` (fmap nxt $ race t e) where
+  nxt (Left b)  = b `switchS` e
+  nxt (Right b) = b
+
+whenJustS :: Steps s (Maybe a) -> Steps s (Event s a)
+whenJustS (Just x  `Step` e) = pure x `Step` fmap whenJustS e
+whenJustS (Nothing `Step` e) = let e' = fmap whenJustS e
+                               in  (e' >>= getHead) `Step` (e' >>= getTail)
+
+
+data Behaviour s a = B { stepsFrom :: Time s -> Steps s a }
+
+instance Monad (Behaviour s) where
+  return x = B $ const (x `Step` never)
+  (B m) >>= f = B $ \t -> stepsFrom (f (getHead (m t))) t
+
+instance MonadFix (Behaviour s) where
+  mfix f = B $ \t -> let b = stepsFrom (f (getHead b)) t
+                     in b
+
+evToSteps :: Event s (Behaviour s a) -> Event s (Steps s a)
+evToSteps e = memoEv $ \t -> 
+     case e `getAt` t of
+      (t',b) = 
+{-
+switch :: Behaviour s a -> Event s (Behaviour s a) -> Behaviour s a
+switch (B f) e = B $ \t -> f t `switchS` e
+
+
+whenJust :: Behaviour s (Maybe a) -> Behaviour s (Event s a)
+whenJust (B f) = B $ \t -> whenJustS (f t) -- + forget + delay
+-}
+instance Functor (Behaviour s) where
+  fmap = liftM
+
+instance Applicative (Behaviour s) where
+  pure = return
+  (<*>) = ap
+
+
+{-
 
 -- these discrete semantics correspond to the actual semantics by
 -- the following function:
 
 -- [.] = toDenotation
 -- [x `Step` (te,y)] = \t -> if t < te then x else [y] t
-
-data Behaviour a = Step { getHead :: a, getTail :: Event (Behaviour a) }
-
-instance Monad Behaviour where
+instance Monad (Behaviour s) where
   return x = x `Step` never
   (h `Step` t) >>= f = f h `switch` fmap (>>= f) t
 
 
-instance MonadFix Behaviour where
+instance MonadFix (Behaviour s) where
   mfix f = let b@(a `Step` t) = f a in b 
 
 -- That the above corresponds to the 
@@ -39,34 +83,4 @@ instance MonadFix Behaviour where
 --       \t -> let (a `Step` (te,y)) = f a in if t < te then a else [y] t  -- rewrite lets
 
 
-
-
-(h `Step` t) `switch` e = h `Step` (fmap nxt $ race t e) where
-  nxt (Left b)  = b `switch` e
-  nxt (Right b) = b
-
-whenJust :: Behaviour (Maybe a) -> Behaviour (Event a)
-whenJust (Just x  `Step` e) = pure x `Step` fmap whenJust e
-whenJust (Nothing `Step` e) = let e' = fmap whenJust e
-                              in  (e' >>= getHead) `Step` (e' >>= getTail)
-
-
-
--- external interface..,
-sample :: Event () -> Behaviour a -> Event a
-sample e = loop where
-  loop b@(h `Step` t) = 
-     do v <- race t e
-        case v of
-           Left b'  -> loop b'
-           Right () -> return h
-
-
-
-
-instance Functor Behaviour where
-  fmap f a = a >>= return . f
-
-instance Applicative Behaviour where
-  pure = return
-  f <*> g = do x <- f ; y <- g ; return (x y)
+-}

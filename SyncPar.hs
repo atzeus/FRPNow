@@ -8,6 +8,8 @@ import Control.Monad
 import Control.Monad.Trans
 import TimeIVar 
 import Event
+import System.IO.Unsafe
+import Data.Either
 
 start  :: IO a -> SyncPar s (Event s a)
 start = prim . Start
@@ -20,58 +22,62 @@ data SyncParP s a where
   Start :: IO a -> SyncParP s (Event s a)
   Fork  :: Event s (SyncPar s a) -> SyncParP s (Event s a)
 
-data WaitReq s = forall a. WaitReq (TIVar s a) (Event s (SyncPar s a))
+data WaitReq s = WaitReq (Event s ([Req s]))
 data IOReq s = forall a. IOReq (TIVar s a) (IO a)
 type Req s = Either (IOReq s) (WaitReq s)
 
 
+
 runSyncPar :: (forall s .SyncPar s (Event s a)) -> IO a
-runSyncPar m = do f <- newFlag; withTimeStamper (start f) where
-  start f stamper = do t <- endRound stamper
-                       (ev,l) <- initSyncPar t
-                       let (io,waits) = partitionEithers ev
-                       mapM_ (startJob flag stamper) ios 
-                       checkEv (info t) t ev (loop flag stamper waits) 
+runSyncPar m = do f <- newFlag
+                  withTimeStamper $ \stamper ->
+                    do t <- endRound stamper
+                       (ev,reqs) <- runTIVarSupply (initSyncPar m)
+                       start f stamper ev t reqs
+ where 
+  start flag stamper ev = loop where
+    loop time reqs = 
+      let reqs'      = expandReqs (fromStamp time) reqs
+          (io,waits) = partitionEithers reqs'
+      in do mapM_ (startJob flag stamper) io
+            case ev `getAt` fromStamp time of
+              Just (_,x)  -> return x
+              Nothing     -> 
+                do waitForSignal flag
+                   t <- endRound stamper
+                   loop t (map Right waits)
 
-  checkEv time ev cont = 
-     case ev `getAt` time of
-         Just (_,x)  -> return x
-         Nothing     -> cont ev'
-
-  loop flag stamper waits ev  = 
-     do waitForSignal flag
-        mapM (updateWait (info t) t) waits 
-            t <- endRound stamper
-        let (io,waits) = partitionEithers ev
-        mapM_ (startJob flag stamper) ios 
-        checkEv (info t) t ev (loop flag stamper waits) 
-
-
-  updateWait (WaitReq v e) time = 
-       case e `getAt` time of
-        Just (t,x) ->  
+          
 
 
-initSyncPar :: forall a s. Time s -> SyncPar s a -> TIVarSupply s (a,[Req s])
-initSyncPar time = loop [] where 
-	loop :: forall a . [Req s] -> SyncPar s a -> TIVarSupply s (a,[Req s])
-	loop l e = case viewTermM e of
-	  Return x -> return (x,l)
-	  m :>>= f -> case m of
-		Start m -> do k <- newTIVar
-		              let w = Left $ IOReq k m
-		              loop (w : l) (f (fromTIVar k))
-		Fork e -> case e `getAt` time of
-		               Just (t,x) -> do (v, l') <- loop l x 
-		                                let ev = makeEvent t v
-		                                loop l' (f ev)
-		               Nothing -> do k <- newTIVar
-		                             let w = Right $ WaitReq k e
-		                             loop (w:l) (f (fromTIVar k))
+expandReqs :: forall s. Time s -> [Req s] -> [Req s]
+expandReqs time = loop where
+  loop = concatMap (either (\x -> [Left x]) follow)
+  follow (WaitReq e) = 
+    case e `getAt` time of
+       Just (_,r) -> loop r
+       Nothing -> [Right (WaitReq e)]
 
 
-startJob :: Flag -> TimeStamper s -> TIVar s a -> IO a -> IO ()
-startJob flag t v m  = 
+
+initSyncPar :: forall a s. SyncPar s a -> TIVarSupply s (a,[Req s])
+initSyncPar = loop [] where 
+    loop rs e = case viewTermM e of
+      Return x -> return (x,rs)
+      m :>>= f -> case m of
+        Start m -> do k <- makeTIVar
+                      let r = Left $ IOReq k m
+                      loop (r : rs) (f (fromTIVar k))
+        Fork e   -> do e' <- planTIVarSupply (fmap initSyncPar e)
+                       let r = Right $ WaitReq (fmap snd e')
+                       loop (r:rs) (f (fmap fst e'))
+
+
+planTIVarSupply :: Event s (TIVarSupply s a) -> TIVarSupply s (Event s a)
+planTIVarSupply = return . fmap (unsafePerformIO . runTIVarSupply) 
+
+startJob :: Flag -> TimeStamper s -> IOReq s -> IO ()
+startJob flag t (IOReq v m)  = 
   do forkIO $ do a <- m
                  writeTIVar t v a
                  signal flag
