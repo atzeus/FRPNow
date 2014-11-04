@@ -18,8 +18,7 @@ whenJustS :: Steps s (Maybe a) -> Steps s (Event s a)
 whenJustS (Just x  `Step` e) = pure x `Step` fmap whenJustS e
 whenJustS (Nothing `Step` e) = let e' = fmap whenJustS e
                                in  (e' >>= getHead) `Step` (e' >>= getTail)
-
-
+   
 data Behaviour s a = B { stepsFrom :: Time s -> Steps s a }
 
 instance Monad (Behaviour s) where
@@ -33,15 +32,23 @@ instance MonadFix (Behaviour s) where
 evToSteps :: Event s (Behaviour s a) -> Event s (Steps s a)
 evToSteps e = memoEv $ \t -> 
      case e `getAt` t of
-      (t',b) = 
-{-
+      Just (t',b) -> Just (t', stepsFrom b t')
+      Nothing -> Nothing
+      
+forgetPast :: Time s -> Steps s a -> Steps s a
+forgetPast t = loop where
+  loop (a `Step` b) = case b `getAt` t of
+      Just (_,b) -> loop b
+      Nothing    -> a `Step` b
+      
 switch :: Behaviour s a -> Event s (Behaviour s a) -> Behaviour s a
-switch (B f) e = B $ \t -> f t `switchS` e
-
+switch (B f) e = B $ \t -> case e `getAt` t of
+   Just (_,b) -> stepsFrom b t
+   Nothing    -> f t `switchS` fmap evToSteps e
 
 whenJust :: Behaviour s (Maybe a) -> Behaviour s (Event s a)
-whenJust (B f) = B $ \t -> whenJustS (f t) -- + forget + delay
--}
+whenJust (B f) = B $ \t -> fmap (delay t) (whenJustS (f t)) --  + delay
+
 instance Functor (Behaviour s) where
   fmap = liftM
 
