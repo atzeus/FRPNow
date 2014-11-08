@@ -1,93 +1,59 @@
+{-# LANGUAGE  DeriveFunctor, GeneralizedNewtypeDeriving #-}
+
+
 module Behaviour where
 
+import Past
 import Event
-
+import System.IO.Unsafe
+import Data.IORef
+import Control.Monad
 import Control.Applicative
 import Control.Monad.Fix
-import Control.Monad
 
+data Behaviour a = Behaviour { after :: PastTime -> (a, Event (Behaviour a)) } 
 
-data Steps s a = Step { getHead :: a, getTail :: Event s (Steps s a) }
+instance Monad Behaviour where
+  return x = Behaviour $ const (x,never)
+  m >>= f  = Behaviour $ \t -> 
+      let (a,e) = m `after` t
+          b     = f a `switch` fmap (>>= f) e
+      in b `after` t
 
-switchS :: Steps s a -> Event s (Steps s a) -> Steps s a
-(h `Step` t) `switchS` e = h `Step` (fmap nxt $ race t e) where
-  nxt (Left b)  = b `switchS` e
-  nxt (Right b) = b
+switch :: Behaviour a -> Event (Behaviour a) -> Behaviour a
+switch b e = Behaviour $ \t -> 
+  case e `infoAt` t of
+     Just (_,b') -> b' `after` t
+     Nothing     -> let (h,tl) = b `after` t
+                    in (h, fmap (`switch` e) tl)
 
-whenJustS :: Steps s (Maybe a) -> Steps s (Event s a)
-whenJustS (Just x  `Step` e) = pure x `Step` fmap whenJustS e
-whenJustS (Nothing `Step` e) = let e' = fmap whenJustS e
-                               in  (e' >>= getHead) `Step` (e' >>= getTail)
-   
-data Behaviour s a = B { stepsFrom :: Time s -> Steps s a }
+whenJust :: Behaviour (Maybe a) -> Behaviour (Event a)
+whenJust b = Behaviour $ \t -> 
+   case b `after` t of
+     (Just x, tl) -> (delay t (return x), fmap whenJust tl)
+     (Nothing, t) -> let t' = cont $ fmap whenJust t
+                     in (t' >>= fst, t' >>= snd) 
+ where cont :: Event (Behaviour a) -> Event (a, Event (Behaviour a))
+       cont e = fmap (\(t,b) -> b `after` t) $ withTime e
+                              
+seqB :: Behaviour x -> Behaviour a -> Behaviour a
+seqB s r = Behaviour $ \t -> 
+   (s `after` t) `seq` (r `after` t)
 
-instance Monad (Behaviour s) where
-  return x = B $ const (x `Step` never)
-  (B m) >>= f = B $ \t -> stepsFrom (f (getHead (m t))) t
-
-instance MonadFix (Behaviour s) where
-  mfix f = B $ \t -> let b = stepsFrom (f (getHead b)) t
-                     in b
-
-evToSteps :: Event s (Behaviour s a) -> Event s (Steps s a)
-evToSteps e = memoEv $ \t -> 
-     case e `getAt` t of
-      Just (t',b) -> Just (t', stepsFrom b t')
-      Nothing -> Nothing
-      
-forgetPast :: Time s -> Steps s a -> Steps s a
-forgetPast t = loop where
-  loop (a `Step` b) = case b `getAt` t of
-      Just (_,b) -> loop b
-      Nothing    -> a `Step` b
-      
-switch :: Behaviour s a -> Event s (Behaviour s a) -> Behaviour s a
-switch (B f) e = B $ \t -> case e `getAt` t of
-   Just (_,b) -> stepsFrom b t
-   Nothing    -> f t `switchS` fmap evToSteps e
-
-whenJust :: Behaviour s (Maybe a) -> Behaviour s (Event s a)
-whenJust (B f) = B $ \t -> fmap (delay t) (whenJustS (f t)) --  + delay
-
-instance Functor (Behaviour s) where
-  fmap = liftM
-
-instance Applicative (Behaviour s) where
-  pure = return
-  (<*>) = ap
-
-
-{-
-
--- these discrete semantics correspond to the actual semantics by
--- the following function:
-
--- [.] = toDenotation
--- [x `Step` (te,y)] = \t -> if t < te then x else [y] t
-instance Monad (Behaviour s) where
-  return x = x `Step` never
-  (h `Step` t) >>= f = f h `switch` fmap (>>= f) t
-
-
-instance MonadFix (Behaviour s) where
-  mfix f = let b@(a `Step` t) = f a in b 
-
--- That the above corresponds to the 
--- semantics is not so obvious (to me)
---
--- To prove:
--- [mfix f] = [mfix] (\a -> [f a])
-
--- Proof by rewriting
--- lhs : [let b@(a `Step` t) = f a in b]                                  -- unfold of mfix
---       let b@(a `Step` t) = f a in [b]                                  -- push [.] inwards
---       let (a `Step` (te,y)) = f a in \t -> if t < te then a else [y] t -- unfold [.]
---       \t -> let (a `Step` (te,y)) = f a in if t < te then a else [y] t -- lift lambda
---
--- rhs : (\f t -> let a = f a t in a) (\a -> [f a]) -- unfold mfix(denot)
---       \t -> let a = [f a] t in a                  -- inline arg
---       \t -> let a = let (a `Step` (te,y) in if t < te then x else [y] t) in a in a -- unfold [.]
---       \t -> let (a `Step` (te,y)) = f a in if t < te then a else [y] t  -- rewrite lets
-
-
--}
+memoB :: (PastTime -> (a, Event (Behaviour a))) -> Behaviour a
+memoB f = Behaviour $ unsafePerformIO $ liftM f' (newIORef (bigBang, f bigBang)) where
+  f' r t = unsafePerformIO $
+      do (pt,(hd,tl)) <- readIORef r
+         case compare pt t of
+           EQ -> return (hd,tl)
+           GT -> error "Non-monotomic sampling!"
+           LT -> let (hd',_) = f t
+                     tl'      = dropEvents t tl
+                     res = (hd',tl')
+                 in writeIORef r (t,res) >> return res
+  dropEvents :: PastTime -> Event (Behaviour a) -> Event (Behaviour a)
+  dropEvents t e = case e `infoAt` t of
+        Just (x,b) -> dropEvents t (snd (b `after` t))
+        Nothing -> e
+               
+         

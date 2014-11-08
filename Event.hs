@@ -1,56 +1,51 @@
+{-# LANGUAGE TupleSections #-}
+module Event where
 
-{-# LANGUAGE  TupleSections,GADTs, ExistentialQuantification,TypeOperators,Rank2Types, ScopedTypeVariables #-}
-
-module Event(Time, timeMinBound, fromStamp, Event, never, getAt, delay, fromTIVar, race, memoEv) where
-
-import TimeIVar
-import Data.IORef
-import System.IO.Unsafe
+import Past
+import Future
 import Control.Monad
 import Control.Applicative
+import System.IO.Unsafe
+import Data.IORef
 
-data Time s = MinBound | Time (TimeStamp s) | MaxBound deriving (Eq, Ord)
+newtype Event a = Event { infoAt :: PastTime -> Maybe (PastTime,a) }
 
-timeMinBound = MinBound
-fromStamp    = Time
+liftPast :: PastTime -> a -> Event a
+liftPast p a = Event $ \t -> if t >= p then Just (p,a) else Nothing 
 
-newtype Event s a = Ev { getAt :: Time s -> Maybe (Time s, a) }
+liftFuture :: Future a -> Event a
+liftFuture f = Event $ futureInfoAt f
 
-never = Ev $ const Nothing
+never :: Event a
+never = Event $ const Nothing
 
-fromTIVar :: TIVar s a -> Event s a 
-fromTIVar v = Ev convTime where
-  convTime MinBound   = Nothing
-  convTime t@(Time s) = fmap (t,) (v `tvarAt` s)
-  convTime MaxBound   = undefined
+delay :: PastTime -> Event a -> Event a
+delay p e = Event $ \t -> 
+  do (q,a) <- e `infoAt` t
+     if t >= p then Nothing else Just (max p q, a)
 
-delay :: Time s -> Event s a -> Event s a
-delay tm (Ev f) = Ev $ \t -> if t >= tm 
-                             then do (t',a) <- f t
-                                     return (max t' tm,a)
-                              else Nothing
+withTime :: Event a -> Event (PastTime,a)
+withTime e = Event $ \t -> fmap (\(t,a) -> (t,(t,a))) $ e `infoAt` t
 
-instance Monad (Event s) where
-  return x = Ev $ const $ Just (MinBound,x)
-  Ev m >>= f = memoEv $ \t -> 
-       do (ta,a) <- m t 
-          (tb,b) <- getAt (f a) t
-          return (max ta tb, b)
+instance Monad Event where
+  return x = Event $ const (Just (bigBang,x))
+  m  >>= f = memoEv $ \t ->
+      do (ta,a) <- m   `infoAt` t
+         (tb,b) <- f a `infoAt` t
+         return (max ta tb, b)
 
-race :: Event s a -> Event s b -> Event s (Either a b)
-race l r = memoEv $ \t -> 
-      case (l `getAt` t, r `getAt` t) of
-        (Just (ta,a) , Just (tb,b)) 
-            | ta < tb    -> Just (ta, Left  a)
-            | otherwise  -> Just (tb, Right b)
-        (Just (ta,a), _) -> Just (ta, Left  a)
-        (_, Just (tb,b)) -> Just (tb, Right b)
-        _                -> Nothing
+first :: Event a -> Event b -> Event (Either a b)
+first l r = memoEv $ \t ->
+ case (l `infoAt` t, r `infoAt` t) of
+       (Just (ta,a), Just (tb,b) ) 
+            | tb <= ta  -> Just (tb,Right b)
+            | otherwise -> Just (ta,Left  a)
+       (Just (ta,a), _) -> Just (ta,Left  a)
+       (_, Just (tb,b)) -> Just (tb,Right b)
+       (_, _ )          -> Nothing
 
--- only safe on events
-
-memoEv :: (Time s -> Maybe (Time s, a)) -> Event s a
-memoEv f = Ev $ unsafePerformIO $ liftM f' (newIORef Nothing) where
+memoEv :: (PastTime ->  Maybe (PastTime,a)) -> Event a 
+memoEv f = Event $ unsafePerformIO $ liftM f' (newIORef Nothing) where
   f' r t = unsafePerformIO $
       do v <- readIORef r
          case v of
@@ -58,11 +53,10 @@ memoEv f = Ev $ unsafePerformIO $ liftM f' (newIORef Nothing) where
             _ -> let res = f t
                  in writeIORef r res >> return res 
 
-
-instance Functor (Event s) where
+instance Functor Event where
   fmap = liftM
 
-instance Applicative (Event s) where
+instance Applicative Event where
   pure = return
   (<*>) = ap
-
+  
