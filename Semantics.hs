@@ -25,6 +25,9 @@ whenJust :: Behaviour (Maybe a) -> Behaviour (Event a)
 whenJust f t = let t' = undefined -- min { t' >= t | isJust (f t') }
                in fromJust (f t') :@ t'
 
+seqB :: Behaviour x -> Behaviour a -> Behaviour a
+seqB s b t = s t `seq` b t
+
 {- reader monad
    this monad & monadfix is listed in the
    standard libraries as Monad ((->) r) 

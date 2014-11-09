@@ -11,9 +11,7 @@ newFuture :: IO (Future a)
 newFuture = liftM Future newIVar
 
 futureIsNow :: Future a -> a -> IO ()
-futureIsNow (Future r) a = 
-  do t <- getTime 
-     writeIVar r (t,a)
+futureIsNow (Future r) a = withCurTime (\t -> writeIVar r (t,a)) 
 
 futureInfoAt :: Future a -> PastTime -> Maybe (PastTime,a)
 futureInfoAt (Future r) t = unsafePerformIO $

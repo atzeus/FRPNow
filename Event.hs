@@ -5,6 +5,7 @@ import Past
 import Future
 import Control.Monad
 import Control.Applicative
+import Data.Maybe
 import System.IO.Unsafe
 import Data.IORef
 
@@ -19,10 +20,6 @@ liftFuture f = Event $ futureInfoAt f
 never :: Event a
 never = Event $ const Nothing
 
-delay :: PastTime -> Event a -> Event a
-delay p e = Event $ \t -> 
-  do (q,a) <- e `infoAt` t
-     if t >= p then Nothing else Just (max p q, a)
 
 withTime :: Event a -> Event (PastTime,a)
 withTime e = Event $ \t -> fmap (\(t,a) -> (t,(t,a))) $ e `infoAt` t
@@ -45,13 +42,13 @@ first l r = memoEv $ \t ->
        (_, _ )          -> Nothing
 
 memoEv :: (PastTime ->  Maybe (PastTime,a)) -> Event a 
-memoEv f = Event $ unsafePerformIO $ liftM f' (newIORef Nothing) where
+memoEv f = Event $ unsafePerformIO $ liftM f' (newIORef (bigBang,Nothing)) where
   f' r t = unsafePerformIO $
-      do v <- readIORef r
-         case v of
-            Just (t',a) | t' <= t -> return $ Just (t',a)
-            _ -> let res = f t
-                 in writeIORef r res >> return res 
+      do (tp,v) <- readIORef r
+         if tp >= t || isJust v
+         then return (fmap (tp,) v)
+         else let res = f t
+              in writeIORef r (t,fmap snd res) >> return res 
 
 instance Functor Event where
   fmap = liftM

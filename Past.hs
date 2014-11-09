@@ -1,10 +1,8 @@
-module Past(bigBang,PastTime,getTime) where
+module Past(bigBang,PastTime,withCurTime) where
 
 import Control.Concurrent
 import Control.Concurrent.MVar
-import System.Clock hiding (getTime)
-
-import qualified System.Clock as Clock
+import System.Clock 
 import System.IO.Unsafe
 
 data    PastTime = BigBang 
@@ -13,13 +11,14 @@ data    PastTime = BigBang
 bigBang :: PastTime
 bigBang = BigBang
 
-getTime :: IO PastTime
-getTime = do tl <- takeMVar globalClockLowerbound
-             t <- higherTime tl
-             putMVar globalClockLowerbound t
-             return (PastTime t)
+withCurTime :: (PastTime -> IO ()) -> IO ()
+withCurTime f = 
+  do tl <- takeMVar globalClockLowerbound
+     t <- higherTime tl
+     f (PastTime t)
+     putMVar globalClockLowerbound t
   where higherTime tl = loop where
-         loop = do t <- Clock.getTime Monotonic
+         loop = do t <- getTime Monotonic
                    if tl == t
                    then yield >> loop
                    else return t
