@@ -1,7 +1,6 @@
 {-# LANGUAGE  GeneralizedNewtypeDeriving, TypeOperators #-}
-module SyncPar where
+module SpaceTime where
 
-import Util.TermM
 import Behaviour
 import Time
 import IVar
@@ -15,11 +14,11 @@ import Data.Either
 
 newtype SpaceTime a = SpaceTime { runSpaceTime :: IO a } deriving (Monad,Applicative,Functor)
 
-start  :: IO a -> SpaceTime (Event a)
-start = SpaceTime . startJob
+startNow  :: IO a -> SpaceTime (Event a)
+startNow = SpaceTime . startJob
 
-fork :: Event (SpaceTime a) -> SpaceTime (Event a)
-fork = SpaceTime . startFork
+continue :: Event (SpaceTime a) -> SpaceTime (Event a)
+continue = SpaceTime . startFork
 
 startJob :: IO a -> IO (Event a)
 startJob m = 

@@ -40,7 +40,8 @@ afterS (h :-> t) tm = case t `infoAt` tm of
    Nothing     -> h :-> t
 
 
-
+sampleNow :: Behaviour a -> IO a
+sampleNow b = (\t -> headB $ b `after` t) <$> getTime
 
 newtype Behaviour a = Behaviour { after :: PastTime -> BehaviourS a}
 
@@ -86,3 +87,10 @@ memoB f = Behaviour $ unsafePerformIO $ liftM f' (newIORef Nothing) where
 
 behaviour = updateSelf . memoB
 
+
+instance Functor Behaviour where
+  fmap = liftM 
+
+instance Applicative Behaviour where
+  pure = return
+  (<*>) = ap

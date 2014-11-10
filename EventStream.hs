@@ -1,17 +1,131 @@
 {-# LANGUAGE ScopedTypeVariables, GADTs, TupleSections,GeneralizedNewtypeDeriving #-}
 
-module EventStream(
-      EventStream, repeatEv, nextES, nextESSimul, foldES, mapES, filterES, on, appOn, parList, foldESB, foldESp,
-      EventStreamM, emit, waitEv, waitJust, wait, waitB, waitIO, liftES, runEventStreamM,
-      Void, EventM,runEventM, 
-      becomesJust,becomesTrue) where
+module EventStream where
 
-import Implementation
+import FRPNow
 import Lib
 import Data.Maybe
 import Control.Monad hiding (when)
 import Control.Applicative
-import Util.TermM
+
+
+data Void 
+
+type EventStream a = EventStreamEnd a Void
+
+type EventStreamEnd x a = Event (EVSE x a)
+data EVSE x a = x :< EventStreamEnd x a
+              | End a
+
+
+
+mapBI :: Behaviour (a -> b) -> EventStream a -> Behaviour (EventStream b)
+mapBI f b  = plan $ fmap loop b where
+  loop (h :< t) = do v <- f
+                     t' <- plan (fmap loop t)
+                     return (v h :< t')
+
+filterJusts :: EventStream (Maybe a) -> EventStream a
+filterJusts b = b >>= loop where
+  loop (h :< t) = case h of
+     Just x  -> return $ x :< filterJusts t
+     Nothing -> filterJusts t
+                          
+appOnImpl :: Behaviour (a -> b) -> EventStream a -> Behaviour (EventStream b)
+appOnImpl b es =  plan $ fmap nxt es
+  where nxt (h :< t) = do h' <- b <*> pure h
+                          t' <- plan $ fmap nxt t
+                          return (h' :< t')               
+
+
+foldESBImpl :: (Behaviour a -> b -> Behaviour (Behaviour a)) -> Behaviour a -> EventStream b -> Behaviour (Behaviour a)
+foldESBImpl f i e = do s <- plan $ fmap (nxt i) e
+                       return (i `switch` s) where
+    nxt i (h :< t) = do fv <- f i h
+                        t' <- plan $ fmap (nxt fv) t
+                        return (fv `switch` t')
+
+
+
+returnES :: a -> EventStreamEnd x a
+returnES = pure . End 
+
+bindES ::  EventStreamEnd x a -> (a -> EventStreamEnd x b) -> EventStreamEnd x b
+bindES e f = e >>= loop
+   where loop (h :< t) = return (h :< (t >>= loop))
+         loop (End x)  = f x
+
+{-
+foldBI :: Behaviour (a -> b -> a) -> Behaviour a -> EVS b -> Behaviour (EVS b)
+foldBI f (h :< t) = 
+-}
+{-
+foldESBImpl :: forall a b s. (Behaviour s a -> b -> Behaviour s (Behaviour s a)) -> Behaviour s a -> EventStreamImpl s b -> Behaviour s (Behaviour s a)
+foldESBImpl f i e = do s <- plan $ fmap (nxt i) e
+                       return (i `switch` s) where
+    nxt i (h :< t) = do fv <- f i h
+                        t' <- plan $ fmap (nxt fv) t
+                        return (fv `switch` t')
+
+
+foldESImpl :: forall a b s. (a -> b -> Behaviour s a) -> a -> EventStreamImpl s b -> Behaviour s (Behaviour s a)
+foldESImpl f i e = do s <- plan $ fmap (nxt i) e
+                      return (pure i `switch` s) where
+    nxt i (h :< t) = do fv <- f i h
+                        t' <- plan $ fmap (nxt fv) t
+                        return (pure fv `switch` t')
+
+
+filterESImpl :: forall s a. (a -> Bool) -> EventStreamImpl s a -> Behaviour s (EventStreamImpl s a)
+filterESImpl f e = join <$> (plan $ fmap loop e) where
+  loop :: EVS s a -> Behaviour s (EventStreamImpl s a)
+  loop (h :< t) = nxt <$> join <$> (plan $ fmap loop t)
+    where nxt t' | f h       = pure (h :< t')
+                 | otherwise = t'
+
+
+appOnImpl :: Behaviour s (a -> b) -> EventStreamImpl s a -> Behaviour s (EventStreamImpl s b)
+appOnImpl b es =  plan $ fmap nxt es
+  where nxt (h :< t) = do h' <- b <*> pure h
+                          t' <- plan $ fmap nxt t
+                          return (h' :< t')
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 repeatEv :: Behaviour s (Event s a) -> Behaviour s (EventStream s a)
 repeatEv b = fst <$> runEventStreamM loop where
@@ -122,46 +236,10 @@ instance BehaviourLike m => BehaviourLike (EventStreamM m x) where
   liftB = liftES . liftB
                    
 
-type EventStreamImpl s a = Event s (EVS s a)
-data EVS s a = a :< EventStreamImpl s a
-
-mapESImpl :: (a -> b) -> EventStreamImpl s a -> EventStreamImpl s b
-mapESImpl f = fmap loop where
-  loop (h :< t)  = f h :< fmap loop t
-
-foldESBImpl :: forall a b s. (Behaviour s a -> b -> Behaviour s (Behaviour s a)) -> Behaviour s a -> EventStreamImpl s b -> Behaviour s (Behaviour s a)
-foldESBImpl f i e = do s <- plan $ fmap (nxt i) e
-                       return (i `switch` s) where
-    nxt i (h :< t) = do fv <- f i h
-                        t' <- plan $ fmap (nxt fv) t
-                        return (fv `switch` t')
-
-
-foldESImpl :: forall a b s. (a -> b -> Behaviour s a) -> a -> EventStreamImpl s b -> Behaviour s (Behaviour s a)
-foldESImpl f i e = do s <- plan $ fmap (nxt i) e
-                      return (pure i `switch` s) where
-    nxt i (h :< t) = do fv <- f i h
-                        t' <- plan $ fmap (nxt fv) t
-                        return (pure fv `switch` t')
-
-
-filterESImpl :: forall s a. (a -> Bool) -> EventStreamImpl s a -> Behaviour s (EventStreamImpl s a)
-filterESImpl f e = join <$> (plan $ fmap loop e) where
-  loop :: EVS s a -> Behaviour s (EventStreamImpl s a)
-  loop (h :< t) = nxt <$> join <$> (plan $ fmap loop t)
-    where nxt t' | f h       = pure (h :< t')
-                 | otherwise = t'
-
-
-appOnImpl :: Behaviour s (a -> b) -> EventStreamImpl s a -> Behaviour s (EventStreamImpl s b)
-appOnImpl b es =  plan $ fmap nxt es
-  where nxt (h :< t) = do h' <- b <*> pure h
-                          t' <- plan $ fmap nxt t
-                          return (h' :< t')
                         
 
 
-data Void 
+
 
 type EventM m s a = EventStreamM m Void s a
 
@@ -171,7 +249,7 @@ runEventM ::(BehaviourLike m, PlanMonad m, Monad (m s)) =>
 runEventM e = runEventStreamM e >>= \(_,a) -> return a
 
 
-type EventStreamEnd s x a = Event s (EVSE s x a)
+
       
 data EVSE s x a = x :| EventStreamEnd s x a
                 | End a
@@ -217,12 +295,6 @@ runEventStreamM' t = case viewTermM t of
        handlePrim (Wait e)   = return $ fmap End e
        handlePrim (Lift b)  = b >>= \x -> return $ pure (End x)
 
-bindES ::  forall m s x a b.  (BehaviourLike m, PlanMonad m, Monad (m s)) =>
-           EventStreamEnd s x a -> (a -> m s (EventStreamEnd s x b)) -> m s (EventStreamEnd s x b)
-bindES e f = do e' <- plan $ fmap nxt e
-                return $  join e'
-   where nxt :: EVSE s x a -> m s (Event s (EVSE s x b))
-         nxt (x :| t) = do t' <- plan $ fmap nxt t
-                           return $ return $ x :| (join t')
-         nxt (End a)  = f a 
+
+-}
 
