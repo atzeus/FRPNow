@@ -1,54 +1,43 @@
 {-# LANGUAGE TupleSections #-}
 module Event where
 
-import Past
-import Future
+import Time
 import Control.Monad
 import Control.Applicative
 import Data.Maybe
 import System.IO.Unsafe
-import Data.IORef
 
-newtype Event a = Event { infoAt :: PastTime -> Maybe (PastTime,a) }
-
-liftPast :: PastTime -> a -> Event a
-liftPast p a = Event $ \t -> if t >= p then Just (p,a) else Nothing 
-
-liftFuture :: Future a -> Event a
-liftFuture f = Event $ futureInfoAt f
-
-never :: Event a
-never = Event $ const Nothing
+data Event a = a :@ Time
 
 
-withTime :: Event a -> Event (PastTime,a)
-withTime e = Event $ \t -> fmap (\(t,a) -> (t,(t,a))) $ e `infoAt` t
+never = undefined :@ maxBound
 
 instance Monad Event where
-  return x = Event $ const (Just (bigBang,x))
-  m  >>= f = memoEv $ \t ->
-      do (ta,a) <- m   `infoAt` t
-         (tb,b) <- f a `infoAt` t
-         return (max ta tb, b)
+  return x = x :@ minBound
+  (a :@ ta)  >>= f = let b :@ tb = f a
+                     in b  :@ maxTime ta tb
+
+withTime :: Event a -> Event (PastTime,a)
+withTime e = (,) <$> evTime e <*> e
+
+evTime :: Event a -> Event PastTime
+evTime (a :@ t) = t' :@ t where
+   t' = unsafePerformIO $ waitFor t
+   {-# NOINLINE t' #-}
+{-# NOINLINE evTime #-}
 
 first :: Event a -> Event b -> Event (Either a b)
-first l r = memoEv $ \t ->
- case (l `infoAt` t, r `infoAt` t) of
-       (Just (ta,a), Just (tb,b) ) 
-            | tb <= ta  -> Just (tb,Right b)
-            | otherwise -> Just (ta,Left  a)
-       (Just (ta,a), _) -> Just (ta,Left  a)
-       (_, Just (tb,b)) -> Just (tb,Right b)
-       (_, _ )          -> Nothing
+first (a :@ ta) (b :@ tb) = 
+  do t <- evTime (() :@ minTime ta tb )
+     return $ case (ta `pastTimeAt` t, tb `pastTimeAt` t) of
+           (Just l, Just r ) 
+                 | r <= l    -> Right b
+                 | otherwise -> Left a
+           (Just l, _      ) -> Left a
+           (_     , Nothing) -> Right b   
 
-memoEv :: (PastTime ->  Maybe (PastTime,a)) -> Event a 
-memoEv f = Event $ unsafePerformIO $ liftM f' (newIORef (bigBang,Nothing)) where
-  f' r t = unsafePerformIO $
-      do (tp,v) <- readIORef r
-         if tp >= t || isJust v
-         then return (fmap (tp,) v)
-         else let res = f t
-              in writeIORef r (t,fmap snd res) >> return res 
+infoAt :: Event a -> PastTime -> Maybe (PastTime,a)
+infoAt (a :@ te) t = fmap (,a) $ te `pastTimeAt` t
 
 instance Functor Event where
   fmap = liftM

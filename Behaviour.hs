@@ -3,7 +3,7 @@
 
 module Behaviour where
 
-import Past
+import Time
 import Event
 import System.IO.Unsafe
 import Data.IORef
@@ -16,6 +16,9 @@ data BehaviourS a = (:->) { headB :: a, tailB ::  Event (BehaviourS a) }
 instance Monad BehaviourS where
   return x        = x :-> never
   (h :-> t) >>= f = f h `switchS` fmap (>>= f) t
+
+instance MonadFix BehaviourS where
+  mfix f = fix (f . headB)
 
 switchS :: BehaviourS a -> Event (BehaviourS a) -> BehaviourS a
 switchS (h :-> t) e = h :-> fmap (either (`switchS` e) id) (first t e) 
@@ -47,7 +50,8 @@ instance Monad Behaviour where
    bind :: BehaviourS a -> (a -> Behaviour b) -> Behaviour b
    bind (h :-> t) f = f h `switch` fmap (`bind` f) t
 
-
+instance MonadFix Behaviour where
+  mfix f = let b = f (headB b) `after` bigBang in Behaviour (b `afterS`)
 switch m e = Behaviour $ \t -> case e `infoAt` t of
      Just (te,a) -> a `after` max t te
      Nothing     -> (m `after` t) `switchS` cont t e 
@@ -81,3 +85,4 @@ memoB f = Behaviour $ unsafePerformIO $ liftM f' (newIORef Nothing) where
      LT -> v `afterS` t
 
 behaviour = updateSelf . memoB
+
