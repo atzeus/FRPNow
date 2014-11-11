@@ -36,7 +36,11 @@ flipDC = decomp . flipF . Comp
 
 instance (Functor a, Functor c, Flip a c, Flip b c) => 
          Flip (a :. b) c  where
-  flipF =  Comp . fmap Comp . decomp . flipF . Comp . fmap (decomp . flipF  . Comp) . decomp . decomp
+  flipF =  Comp . fmap Comp . flipDC . fmap flipDC . decomp . decomp
+
+instance (Functor a, Functor b, Flip a b, Flip a c) => 
+      Flip a (b :. c)  where
+  flipF = Comp . Comp . fmap flipDC . flipDC . fmap decomp . decomp
 
 instance (Flip e b, Monad e, Monad b) => Monad (b :. e) where
   return  = Comp . return . return
