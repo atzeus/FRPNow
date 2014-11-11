@@ -40,6 +40,15 @@ instance (Functor a, Functor c, Flip a c, Flip b c) =>
 
 instance (Flip e b, Monad e, Monad b) => Monad (b :. e) where
   return  = Comp . return . return
-  m >>= f = Comp $ join $ liftM (liftM join . flipDC . liftM (decomp . f))  (decomp m) 
-  
-                
+  m >>= f = joinFlip (fmap2m f m)
+
+-- annoyance that monad is not subclass of functor
+fmap2m :: (Monad e, Monad b) => (x -> y) -> (b :. e) x -> (b :. e) y
+fmap2m f = Comp . liftM (liftM f) . decomp 
+
+joinFlip :: (Flip e b, Monad e, Monad b) => ((b :. e) ( (b :. e) x )) -> (b :. e) x 
+joinFlip =  Comp . join . liftM (liftM join . flipDC . liftM (decomp)) . decomp                
+-- this works as follows, we have 
+-- b . e . b . e      flip middle two
+-- b . b . e . e      join left and right
+-- b . e 
