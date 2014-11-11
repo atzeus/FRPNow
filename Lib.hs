@@ -1,4 +1,4 @@
-{-# LANGUAGE GADTs, TupleSections, ScopedTypeVariables,ConstraintKinds,FlexibleContexts,UndecidableInstances #-}
+{-# LANGUAGE MultiParamTypeClasses,GADTs, TypeOperators, TupleSections, ScopedTypeVariables,ConstraintKinds,FlexibleContexts,UndecidableInstances #-}
 
 module Lib where
 
@@ -8,15 +8,11 @@ import Control.Monad hiding (when,until)
 
 import Debug.Trace
 import Prelude hiding (until)
+import FunctorCompose
 
-step :: a -> Event (Behaviour a) -> Behaviour a
-step a s = pure a `switch` s
+type Behaviour2 a = Behaviour (Behaviour a)
 
-toBehaviour :: Event (Behaviour a) -> Behaviour (Maybe a)
-toBehaviour e = Nothing `step` fmap (fmap Just) e
-
-planP :: Event (Behaviour a) -> Behaviour (Event a)
-planP = whenJust . toBehaviour
+type Now a 
 
 getNow :: Event a -> Behaviour (Maybe a)
 getNow e = pure Nothing `switch` fmap (pure . Just) e
@@ -49,8 +45,16 @@ zipBE f (bx,e) b = (f <$> bx <*> b) `switch` fmap (const b) e
 (.:) :: BehaviourEnd a x -> Behaviour [a] -> Behaviour [a]
 (.:) = zipBE (:)
 
+  
 
 
+{-
+instance (Functor a, Functor b) => Functor (a :. b) where
+  fmap f (Comp x) = Comp (fmap (fmap f) x)
+
+assoc :: a :. (b :. c) ->  (a :. b) :. c 
+
+-}
 class EventLike e where
   plan :: e (Behaviour a) -> Behaviour (e a)
 
@@ -58,8 +62,7 @@ instance EventLike Event where
   plan = planP
 
 
-
-newtype BehaviourTrans m a = BT { runBT :: Behaviour (m a) }
+type BehaviourTrans m = Behaviour :. m
 
 instance (EventLike m, Monad m) => Monad (BehaviourTrans m) where
   return x = lift (return x)
@@ -82,14 +85,13 @@ instance Applicative (UntilB x) where pure = return ; (<*>) = ap
 instance Monad (UntilB x) where
   return = Done
   Done x    >>= f = f x
-  Until b e >>= f = Until (b `switch` be) ee
-    where fe = fmap (next . f) e
-          be = fe >>= fst
-          ee = fe >>= snd
-
-next :: UntilB x a -> (Event (Behaviour x), Event a)
-next (Done a)      = (never, pure a)
-next (Until b' e') = (pure b',e')
+  Until b e >>= f = Until (b `switch` be) ee where
+    fe = fmap (next . f) e
+    be = fe >>= fst
+    ee = fe >>= snd 
+    next :: UntilB x a -> (Event (Behaviour x), Event a)
+    next (Done a)      = (never, pure a)
+    next (Until b' e') = (pure b',e')
 
 instance EventLike (UntilB x) where
   plan (Done a) = fmap Done a
@@ -97,8 +99,8 @@ instance EventLike (UntilB x) where
 
 type Until x a = BehaviourTrans (UntilB x) a
 
-until :: Behaviour x -> Event a -> Until x a
-until x a = lift (Until x a)
+until :: Behaviour x -> Behaviour (Event a) -> Until x a
+until x a = cur a >>= lift . Until x
 
 
 

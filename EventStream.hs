@@ -1,60 +1,175 @@
-{-# LANGUAGE ScopedTypeVariables, GADTs, TupleSections,GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE LambdaCase, ScopedTypeVariables, Rank2Types, GADTs, TupleSections,GeneralizedNewtypeDeriving #-}
 
-module EventStream where
+module EventStream
+ (EventStream, next, nextSim, (<@@>),filterJusts,filterE, silent,merge, foldB, EventM, emit, waitFor,runEventM)
+  where
 
 import FRPNow
 import Lib
 import Data.Maybe
 import Control.Monad hiding (when)
 import Control.Applicative
+import Data.Monoid
 
 
-data Void 
+newtype EventStream a = WrapES { unwrapES :: Behaviour (ES a) }
 
-type EventStream a = EventStreamEnd a Void
+type ES a = Event (ESH a)
+data ESH a = a :< ES a
 
-type EventStreamEnd x a = Event (EVSE x a)
-data EVSE x a = x :< EventStreamEnd x a
-              | End a
+instance Functor EventStream where
+  fmap f b = pure f <@@> b
+
+next :: EventStream a -> Behaviour (Event a)
+next e = fmap head <$> nextSim e
+
+-- gets all next simultanious values
+nextSim :: EventStream a -> Behaviour (Event [a])
+nextSim es =  do e <- fmap (getAll []) <$> unwrapES es
+                 e' <- plan $ e
+                 return (fmap reverse e')
+  where getAll :: [a] -> ESH a -> Behaviour [a]
+        getAll l (h :< t) = do tc <- getNow t
+                               case tc of
+                                 Just x -> getAll (h : l) x
+                                 Nothing -> return (h : l)
 
 
-
-mapBI :: Behaviour (a -> b) -> EventStream a -> Behaviour (EventStream b)
-mapBI f b  = plan $ fmap loop b where
-  loop (h :< t) = do v <- f
-                     t' <- plan (fmap loop t)
+(<@@>) :: forall a b. Behaviour (a -> b) -> EventStream a -> EventStream b
+(<@@>) f b  = WrapES $ (fmap loop <$> unwrapES b) >>= plan where
+  loop :: ESH a -> Behaviour (ESH b)
+  loop (h :< t) = do v  <- f
+                     t' <- plan $ fmap loop t
                      return (v h :< t')
 
 filterJusts :: EventStream (Maybe a) -> EventStream a
-filterJusts b = b >>= loop where
-  loop (h :< t) = case h of
-     Just x  -> return $ x :< filterJusts t
-     Nothing -> filterJusts t
-                          
-appOnImpl :: Behaviour (a -> b) -> EventStream a -> Behaviour (EventStream b)
-appOnImpl b es =  plan $ fmap nxt es
-  where nxt (h :< t) = do h' <- b <*> pure h
-                          t' <- plan $ fmap nxt t
-                          return (h' :< t')               
+filterJusts b = WrapES $ (>>= loop) <$> unwrapES b where
+  loop :: ESH (Maybe a) -> ES a
+  loop (h :< t) = 
+    let t' = t >>= loop
+    in case h of
+       Just x  -> return $ x :< t'
+       Nothing -> t'
+                   
+filterE :: (a -> Bool) -> EventStream a -> EventStream a
+filterE f b = filterJusts $ pure toMaybe <@@> b
+  where toMaybe x = if f x then Just x else Nothing
+
+once :: x -> EventStream x
+once x = WrapES $ pure $ pure (x :< never)
+
+silent :: EventStream a
+silent = WrapES $ pure never
+
+-- in case of simultanuaty, the left elements come first
+merge :: forall a. EventStream a -> EventStream a -> EventStream a
+merge l r = WrapES $ 
+  do lv <- unwrapES l 
+     rv <- unwrapES r
+     loop lv rv where
+  loop :: ES a -> ES a -> Behaviour (ES a)
+  loop l r = do v <- fmap next <$> firstObs r l  
+                plan v where
+    next (Right (lh :< lt)) = (lh :<) <$> loop lt r
+    next (Left  (rh :< rt)) = (rh :<) <$> loop l  rt
 
 
-foldESBImpl :: (Behaviour a -> b -> Behaviour (Behaviour a)) -> Behaviour a -> EventStream b -> Behaviour (Behaviour a)
-foldESBImpl f i e = do s <- plan $ fmap (nxt i) e
-                       return (i `switch` s) where
+
+foldB :: (Behaviour a -> b -> Behaviour2 a) -> Behaviour a -> EventStream b -> Behaviour2 a
+foldB f i e = do e' <- unwrapES e
+                 s <- plan $ fmap (nxt i) e'
+                 return (i `switch` s) where
     nxt i (h :< t) = do fv <- f i h
                         t' <- plan $ fmap (nxt fv) t
                         return (fv `switch` t')
+{-
+parList :: EventStream s (Behaviour s (BehaviourEnd s a x)) -> Behaviour s (Behaviour s [a])
+parList = foldESB startPar (pure []) where
+  startPar t h = (.: t) <$> h
+-}
+instance Monoid (EventStream a) where
+  mempty = silent
+  mappend = merge
+
+switchES :: forall a. EventStream a -> Event (EventStream a) -> EventStream a
+switchES e s = WrapES $ 
+   do let us = fmap unwrapES s
+      s' <- join <$> plan us
+      e' <- unwrapES e
+      esSwitch e' s' `switch` us where
+  esSwitch :: ES a -> ES a -> Behaviour (ES a)
+  esSwitch l r = do v <- fmap next <$> firstObs l r  
+                    plan v where
+    next :: Either (ESH a) (ESH a) -> Behaviour (ESH a)
+    next (Right r)          = pure r
+    next (Left  (lh :< lt)) = (lh :<) <$> esSwitch lt  r
+
+-- Todo: avoid performance problem see paper "Reflection without Remorse" (plug, mine)
+data EventStreamEnd x a = EVE { stream :: EventStream x, end :: Event a }
+
+instance Monad (EventStreamEnd x) where
+   return x = EVE silent (pure x)
+   (EVE s e) >>= f = let fv = fmap f e
+                         vs = fmap stream fv 
+                         es = fv >>= end
+                     in EVE (s `switchES` vs)  es
+
+
+emitESE :: x -> EventStreamEnd x ()
+emitESE x = EVE (once x) (return ())
+
+waitForESE :: Event a -> EventStreamEnd x a
+waitForESE = EVE silent 
+
+instance EventLike (EventStreamEnd x) where
+  plan (EVE s e) = EVE s <$> plan e
+
+type EventM x a = BehaviourTrans (EventStreamEnd x) a
+
+emit :: x -> EventM x ()
+emit = lift . emitESE
+
+waitFor :: Behaviour (Event a) -> EventM x a
+waitFor b = cur b >>= lift  . waitForESE
+
+runEventM :: EventM x a -> Behaviour (EventStream x, Event a)
+runEventM e = do v <- runBT e
+                 return (stream v, end v)
 
 
 
-returnES :: a -> EventStreamEnd x a
-returnES = pure . End 
 
-bindES ::  EventStreamEnd x a -> (a -> EventStreamEnd x b) -> EventStreamEnd x b
-bindES e f = e >>= loop
-   where loop (h :< t) = return (h :< (t >>= loop))
-         loop (End x)  = f x
+{-
 
+
+
+
+data Void 
+newtype EventStreamEnd x a = EventStreamEnd { getESE :: ESE x a }
+type ESE  x a = Event (EVSE x a)
+data EVSE x a = x :| ESE x a
+              | End a
+
+instance Monad (EventStreamEnd x) where
+  return = EventStreamEnd . pure . End 
+  e >>= f = EventStreamEnd $ (getESE e) >>= loop
+   where loop (h :| t) = return (h :| (t >>= loop))
+         loop (End x)  = getESE (f x)
+
+
+
+
+newtype CodensityT m a = Cod { getCod :: forall b. (a -> m b) -> m b }
+
+abs :: Monad m => CodensityT m a -> m a
+abs (Cod a) = a return
+rep :: Monad m => m a -> CodensityT m a
+rep m = Cod (m >>=)
+
+instance Monad m => Monad (CodensityT m) where
+  return a = rep ( return a)
+  (Cod m) >>= f = Cod $ m . (flip (getCod . f))
+-}
 {-
 foldBI :: Behaviour (a -> b -> a) -> Behaviour a -> EVS b -> Behaviour (EVS b)
 foldBI f (h :< t) = 
@@ -156,24 +271,12 @@ wrapB =  loop where
   nxt (_ :< t) = t
   
 
-nextES :: EventStream s a -> Behaviour s (Event s a)
-nextES e = fmap last <$> nextESSimul e
 
-nextESSimul :: EventStream s a -> Behaviour s (Event s [a])
-nextESSimul es =  do e <- unwrap es
-                     e' <- plan $ fmap (getAll []) e
-                     return (fmap reverse e')
-  where getAll l (h :< t) = do tc <- cur t
-                               case tc of
-                                 Just x -> getAll (h : l) x
-                                 Nothing -> return (h : l)
 
 foldESp :: (a -> b -> a) -> a -> EventStream s b -> Behaviour s (Behaviour s a)
 foldESp f = foldES (\x y -> return $ f x y)
 
-parList :: EventStream s (Behaviour s (BehaviourEnd s a x)) -> Behaviour s (Behaviour s [a])
-parList = foldESB startPar (pure []) where
-  startPar t h = (.: t) <$> h
+
 
 
 foldES :: (a -> b -> Behaviour s a) -> a -> EventStream s b -> Behaviour s (Behaviour s a)

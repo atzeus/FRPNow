@@ -1,18 +1,19 @@
 {-# LANGUAGE ViewPatterns, RecursiveDo, ScopedTypeVariables #-}
 
-import Implementation 
+
 import qualified Graphics.UI.SDL as SDL
 import Control.Monad.Fix
 import Graphics.UI.SDL.Keysym
 import Control.Applicative hiding (empty)
 import Control.Concurrent
 import Control.Monad hiding (when)
+import FRPNow 
 import Lib
 import EventStream
 import Debug.Trace
 import Data.Set hiding (filter)
 import Prelude hiding (until)
-
+{-
 main = do screen <- initSDL
           runNow (mainFRP screen)
           putStrLn "Thank you for using SuperawesomeDraw 0.1!"
@@ -110,10 +111,10 @@ toMousePos = foldESp getMousePos (0.0,0.0)
   where getMousePos p (SDL.MouseMotion x y _ _) = (fromIntegral x, fromIntegral y)
         getMousePos p _                         = p
 
-
-getEvents ::  EventStreamM Now SDL.Event s ()
+-}
+getEvents ::  EventM SDL.Event ()
 getEvents = loop where
- loop = do r <- waitIO $ ioGetEvents
+ loop = do r <- doAt ioGetEvents
            if filter (== SDL.Quit) r /= []
            then return ()
            else do mapM_ emit r

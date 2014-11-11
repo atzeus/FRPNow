@@ -52,7 +52,7 @@ doAt :: IO a -> Now (Event a)
 doAt = undefined
 
 
-continue :: Now (Event (Now a)) -> Now a
+continue :: Event (Now a)-> Now (Event a)
 --   Behaviour (SpaceTimeM (Event (Behaviour (SpaceTimeM a))) --> Behaviour (SpaceTimeM a)
 continue n t = do n' :@ t' <- n t
                   n' (max t' t)
