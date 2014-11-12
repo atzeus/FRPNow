@@ -1,4 +1,4 @@
-module FRPNow(Event, Behaviour, never, whenJust, switch, doAt, continue, seqB, runFRP,step, toBehaviour, planP) where
+module FRPNow(Event, Behaviour, never, whenJust, switch, doAt, continueDo, seqB, runFRP,step, toBehaviour, plan) where
 
 import Event
 import Behaviour

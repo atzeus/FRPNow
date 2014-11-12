@@ -20,21 +20,21 @@ step a s = pure a `switch` s
 toBehaviour :: Event (Behaviour a) -> Behaviour (Maybe a)
 toBehaviour e = Nothing `step` fmap (fmap Just) e
 
-planP :: Event (Behaviour a) -> Behaviour (Event a)
-planP = whenJust . toBehaviour
+plan :: Event (Behaviour a) -> Behaviour (Event a)
+plan = whenJust . toBehaviour
 
 type Now = Behaviour :. SpaceTimeM
 
-instance Flip Event SpaceTimeM where flipF = Comp . continueST . decomp
-instance Flip Event Behaviour where flipF = Comp . planP . decomp
+instance FlipF Event SpaceTimeM where flipF = continueST
+instance FlipF Event Behaviour where flipF =  plan
 
 newtype SpaceTimeM a = SpaceTimeM { runSpaceTime :: IO a } deriving (Monad,Applicative,Functor)
 
 doAt :: IO a -> Now (Event a)
 doAt m = Comp $ pure (SpaceTimeM $ startJob m)
 
-continue :: Event (Now a)-> Now (Event a)
-continue = flipDC
+continueDo :: Event (Now a)-> Now (Event a)
+continueDo = flipF
 
 continueST :: Event (SpaceTimeM a) -> SpaceTimeM (Event a)
 continueST = SpaceTimeM . startFork
