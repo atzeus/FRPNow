@@ -1,8 +1,8 @@
 {-# LANGUAGE DataKinds,GADTs #-}
-module Time(PastTime, bigBang, getTime, Time,newPrimitiveTime, timeOf, timeIsNow, minTime,maxTime, pastTimeAt, waitFor)  where
+module Base.Time(PastTime, bigBang, getTime, Time,newPrimitiveTime, timeOf, timeIsNow, minTime,maxTime, pastTimeAt, waitFor)  where
 
 import System.IO.Unsafe
-import IVar
+import Base.IVar
 import Control.Monad
 import Control.Concurrent.MVar
 import Data.IORef
@@ -14,14 +14,14 @@ import System.Clock hiding (getTime)
 import qualified System.Clock as Clock
 import System.IO.Unsafe
 import Control.Concurrent
-import TryReadMVar
-
+import Base.TryReadMVar
+import Debug.Trace
 munit = return ()
 
 
 
 data PastTime = BigBang 
-              | PastTime TimeSpec deriving (Ord,Eq) -- abstract
+              | PastTime TimeSpec deriving (Ord,Eq,Show) -- abstract
 
 bigBang :: PastTime
 bigBang = BigBang
@@ -59,6 +59,7 @@ data TimeExp
   | SameAs Time 
   | Min Time Time
   | Max Time Time
+  | Never
 
 
 
@@ -70,7 +71,7 @@ data Time = Time {
 
 instance Bounded Time where
   minBound = unsafePerformIO $ newDoneTime bigBang
-  maxBound = unsafePerformIO $ newTime Primitive
+  maxBound = unsafePerformIO $ newTime Never
 
 
 
@@ -126,11 +127,17 @@ runListeners m = mapM_ runListener $ elems m where
   runListener w = deRefWeak w >>= maybe munit updateTime 
 
 setTime ::  Time -> PastTime -> IO ()
-setTime t p = do writeIORef (timeExp t) Nothing
+setTime t p = 
+   do v <- readIORef (timeExp t) 
+      case v of 
+       Nothing -> return ()
+       Just _  -> 
+              do writeIORef (timeExp t) Nothing
+                 putMVar (val t) p
                  l <- readIORef (listeners t) 
                  writeIORef (listeners t) empty 
                  runListeners l
-                 putMVar (val t) p
+
 
 maybeGetTime :: Time -> IO (Maybe PastTime)
 maybeGetTime t = tryReadMVar (val t)
@@ -154,12 +161,13 @@ updateTime t =
                         rv <- maybeGetTime r
                         case (lv,rv) of
                          (Just tl, Just tr) -> setTime t (max tl tr)
-                         (Just tl, _      ) -> writeIORef (timeExp t) (Just $ SameAs l)
-                         (_      , Just tr) -> writeIORef (timeExp t) (Just $ SameAs r)
-                         _                  -> return ()     
+                         (Just tl, _      ) -> writeIORef (timeExp t) (Just $ SameAs r)
+                         (_      , Just tr) -> writeIORef (timeExp t) (Just $ SameAs l)
+                         _                  -> return ()
+        Never -> return ()
 
 addListener :: Time -> IORef Listeners -> IO ()
-addListener t r = do tw <- mkWeak t t (Just $ removeListener (timeId t) r)
+addListener t r = do tw <- mkWeak (val t) t (Just $ putStrLn "Removing!" >> removeListener (timeId t) r)
                      modifyIORef' r (insert (timeId t) tw)
 
 removeListener :: Unique -> IORef Listeners -> IO ()
@@ -170,11 +178,15 @@ pastTimeAt t p = unsafePerformIO $
   do v <- tryReadMVar (val t)
      case v of
       Just tv | tv <= p -> return (Just tv)
-      Nothing -> return Nothing
+      _ -> return Nothing
 {-# NOINLINE pastTimeAt #-}
 
 waitFor :: Time -> IO PastTime
-waitFor t = do t <- readMVar (val t) 
+waitFor t = do v <- readIORef (timeExp t)
+               case v of
+                 Just Never -> putStrLn "Thread waiting on never!"
+                 _          -> return ()
+               t <- readMVar (val t) 
                readMVar globalClockLowerbound -- wait for current time to be done
                return t
 

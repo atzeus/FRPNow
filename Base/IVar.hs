@@ -1,11 +1,11 @@
-module IVar where
+module Base.IVar where
 
 import Control.Concurrent.MVar
 import Control.Applicative
 import Control.Monad
-import TryReadMVar
+import Base.TryReadMVar
 import System.IO.Unsafe
-
+import Debug.Trace
 
 newtype IVar a = IVar (MVar a)
 

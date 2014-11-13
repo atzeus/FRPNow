@@ -1,4 +1,4 @@
-{-# LANGUAGE ViewPatterns, RecursiveDo, ScopedTypeVariables #-}
+{-# LANGUAGE TypeOperators, ViewPatterns, RecursiveDo, ScopedTypeVariables #-}
 
 
 import qualified Graphics.UI.SDL as SDL
@@ -7,14 +7,26 @@ import Graphics.UI.SDL.Keysym
 import Control.Applicative hiding (empty)
 import Control.Concurrent
 import Control.Monad hiding (when)
-import FRPNow 
+import Base.FRPNow 
+import FunctorCompose
 import Lib
 import EventStream
 import Debug.Trace
-import Data.Set hiding (filter)
+import Data.Set hiding (filter,fold)
 import Prelude hiding (until)
-{-
+
 main = do screen <- initSDL
+          evs <- stream <$> decomp getEvents
+          bxs <- cur (decomp $ boxes evs)
+          drawAll screen bxs
+          return ()
+          
+boxes :: EventStream SDL.Event -> Behaviour2 [Box]
+boxes evs = (\x -> [toBox x]) <$> mousePos where
+  mousePos = toMousePos evs
+  toBox p = Box (normalize $ Rect (100,100) p) red
+
+{-
           runNow (mainFRP screen)
           putStrLn "Thank you for using SuperawesomeDraw 0.1!"
           return ()
@@ -88,15 +100,9 @@ isDown m b = member m <$> b
 click m b = becomesTrue $ isDown m b
 release m b = becomesTrue $ not <$> isDown m b
   
-drawAll :: SDL.Surface -> Behaviour s [Box] -> EventM Now s ()
-drawAll screen b =  loop where
-  loop = do v <- liftB $ b
-            waitIO $ drawBoxes screen v
-            wait $ (/= v) <$> b
-            loop
-
-toMouseButtonsDown :: EventStream s SDL.Event -> Behaviour s (Behaviour s (Set MouseBtn))
-toMouseButtonsDown = foldESp updateSet empty where
+-}
+toMouseButtonsDown :: EventStream SDL.Event -> Behaviour2 (Set MouseBtn)
+toMouseButtonsDown = fold updateSet empty where
   updateSet s (SDL.MouseButtonDown _ _ m) | Just m' <- toM m = insert m' s
   updateSet s (SDL.MouseButtonUp   _ _ m) | Just m' <- toM m = delete m' s
   updateSet s _                                              = s
@@ -106,20 +112,38 @@ toM SDL.ButtonMiddle  = Just MMiddle
 toM SDL.ButtonRight   = Just MRight
 toM _             = Nothing
 
-toMousePos :: EventStream s SDL.Event -> Behaviour s (Behaviour s Point)
-toMousePos = foldESp getMousePos (0.0,0.0)
+toMousePos :: EventStream SDL.Event -> Behaviour2 Point
+toMousePos = fold getMousePos (0.0,0.0)
   where getMousePos p (SDL.MouseMotion x y _ _) = (fromIntegral x, fromIntegral y)
         getMousePos p _                         = p
 
--}
-getEvents ::  EventM SDL.Event ()
-getEvents = loop where
- loop = do r <- doAt ioGetEvents
-           if filter (== SDL.Quit) r /= []
-           then return ()
-           else do mapM_ emit r
-                   loop
+getEvents ::  (IO :. EventStreamEnd SDL.Event) ()
+getEvents = while $ 
+  do r <- waitDo ioGetEvents
+     if filter (== SDL.Quit) r /= []
+     then stop
+     else mapM_ emit r >> again
 
+
+
+drawAll :: SDL.Surface -> Behaviour [Box] -> IO ()
+drawAll screen b =  forever $ 
+   do v <- cur b
+      drawBoxes screen v
+      wait $ change b
+
+
+-- nice while thing
+again = return True
+stop = return False
+
+while :: Monad m => m Bool -> m ()
+while m = do v <- m 
+             if v 
+             then while m
+             else return ()
+
+-- Below: IO Stuff
 
 initSDL = do  SDL.init [SDL.InitEverything]
               SDL.setVideoMode 800 600 32 [SDL.DoubleBuf]

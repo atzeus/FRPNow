@@ -1,10 +1,10 @@
 {-# LANGUAGE  DeriveFunctor, GeneralizedNewtypeDeriving #-}
 
 
-module Behaviour where
+module Base.Behaviour where
 
-import Time
-import Event
+import Base.Time
+import Base.Event
 import System.IO.Unsafe
 import Data.IORef
 import Control.Monad
@@ -20,6 +20,7 @@ instance Monad BehaviourS where
 instance MonadFix BehaviourS where
   mfix f = fix (f . headB)
 
+-- Todo: Fix this have performance see paper "Reflection without Remorse" (plug, mine)
 switchS :: BehaviourS a -> Event (BehaviourS a) -> BehaviourS a
 switchS (h :-> t) e = h :-> fmap (either (`switchS` e) id) (first t e) 
 

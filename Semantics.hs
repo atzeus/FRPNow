@@ -41,27 +41,6 @@ instance MonadFix Behaviour where
    mfix f = \t -> let a = f a t in a
 -}
 
-data SpaceTimeM a -- SpaceTime -> (SpaceTime,a)
-
-instance Monad SpaceTimeM where
-
-type Now a = Behaviour (SpaceTimeM a)
-
-doAt :: IO a -> Now (Event a)
---      IO a -> Behaviour (SpaceTimeM (Event a))
-doAt = undefined
-
-
-continue :: Event (Now a)-> Now (Event a)
---   Behaviour (SpaceTimeM (Event (Behaviour (SpaceTimeM a))) --> Behaviour (SpaceTimeM a)
-continue n t = do n' :@ t' <- n t
-                  n' (max t' t)
-
-runFRP :: Now (Event a) -> IO a
---        Behaviour (SpaceTimeM (Event a)) -> IO a
-runFRP = undefined
-
-
 --- Derived combinators
 
 step :: a -> Event (Behaviour a) -> Behaviour a
@@ -72,6 +51,21 @@ toBehaviour e = Nothing `step` fmap (fmap Just) e
 
 plan :: Event (Behaviour a) -> Behaviour (Event a)
 plan = whenJust . toBehaviour
+
+-- IO Stuff
+
+asyncIO :: IO a -> IO (Event a)
+asyncIO = undefined
+
+
+planIO :: Event (IO a)-> IO (Event a)
+planIO = undefined
+
+curIO :: Behaviour a -> IO a
+curIO = undefined
+
+
+
 
 
 ---- Monad - applicative - functor  stuff

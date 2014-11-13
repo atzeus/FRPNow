@@ -1,7 +1,7 @@
 {-# LANGUAGE TupleSections #-}
-module Event where
+module Base.Event where
 
-import Time
+import Base.Time
 import Control.Monad
 import Control.Applicative
 import Data.Maybe
@@ -38,6 +38,9 @@ first (a :@ ta) (b :@ tb) =
 
 infoAt :: Event a -> PastTime -> Maybe (PastTime,a)
 infoAt (a :@ te) t = fmap (,a) $ te `pastTimeAt` t
+
+waitIO :: Event a -> IO a
+waitIO (a :@ t) = waitFor t >> return a
 
 instance Functor Event where
   fmap = liftM

@@ -2,16 +2,57 @@
 
 module Lib where
 
-import FRPNow 
+import Base.FRPNow 
 import Control.Applicative
 import Control.Monad hiding (when,until)
 
-import Debug.Trace
 import Prelude hiding (until)
 import FunctorCompose
 
 type Behaviour2 = (Behaviour :. Behaviour)
 
+-- because behaviour is commutative monad?
+
+instance FlipF IO Behaviour where flipF b = pure $ b >>= curIO
+instance FlipF Event IO where flipF = planIO
+instance FlipF Event Behaviour where flipF e = whenJust (Nothing `step` fmap (fmap Just) e)
+
+class Cur b where cur :: Behaviour a -> b a
+instance Cur IO where cur = curIO
+instance Cur Behaviour where cur = id
+instance (Cur l, Functor l, Applicative r) => Cur (l :. r) where cur = liftFL . cur 
+
+class Wait e where waitEv :: Event a -> e a
+instance Wait IO where waitEv = waitIO
+instance Wait Event where waitEv = id
+instance (Wait r, Applicative f) => Wait (f :. r) where waitEv = liftFR . waitEv
+
+
+wait :: (Monad m, Wait m, Cur m) => Behaviour (Event b) -> m b
+wait b = cur b >>= waitEv
+
+class DoIO e where
+  asyncDo :: IO a -> e (Event a)
+
+instance DoIO IO where
+  asyncDo = asyncIO
+
+instance DoIO (Behaviour :. IO) where
+  asyncDo = liftFR . asyncDo
+
+
+waitDo :: (DoIO l, Wait r,  FAM l, FAM r,  FlipF r l) =>
+          IO b -> (l :. r) b
+waitDo m = liftFL (asyncDo m) >>= waitEv
+
+
+plan = flipF
+
+
+
+
+step :: a -> Event (Behaviour a) -> Behaviour a
+step a s = pure a `switch` s
 
 getNow :: Event a -> Behaviour (Maybe a)
 getNow e = pure Nothing `switch` fmap (pure . Just) e
@@ -29,6 +70,9 @@ when b = whenJust $ choose <$> b where
   choose False = Nothing
 
 
+change :: Eq a => Behaviour a -> Behaviour (Event ())
+change b = do v <- b ; when $ (/= v) <$> b
+
 (<@>) :: Behaviour (a -> b) -> Event a -> Behaviour (Event b)
 b <@> e = plan $ fmap (\x -> b <*> pure x) e
 
@@ -41,23 +85,6 @@ zipBE f (BehaviourEnd bx e) b = (f <$> bx <*> b) `switch` fmap (const b) e
 
 (.:) :: BehaviourEnd a x -> Behaviour [a] -> Behaviour [a]
 (.:) = zipBE (:)
-
-class Cur b where cur :: Behaviour a -> b a
-
-instance Cur Behaviour where cur = id
-instance (Cur l, Functor l, Monad r) => Cur (l :. r) where cur = liftFL . cur 
-
-class Wait e where
-  wait :: Event a -> e a
-
-instance Wait Event where
-  wait = id
-
-instance (Wait r, Monad f) => Wait (f :. r) where
-  wait = liftFR . wait
-
-later :: FlipF Event f => Event (f a) -> f (Event a)
-later = flipF
 
 delay :: Functor f => (f :. Event) x -> (f :. Event) (Event x)
 delay  = Comp . fmap return . decomp
@@ -74,11 +101,13 @@ instance Monad (BehaviourEnd x) where
 instance FlipF (BehaviourEnd x) Behaviour where
   flipF (BehaviourEnd b e) = BehaviourEnd b <$> plan e
 
-until :: (Monad f, Functor f, FlipF (BehaviourEnd x) f, Cur f) => 
+until :: (FAM f, FlipF (BehaviourEnd x) f, Cur f) => 
          Behaviour x -> Behaviour (Event b) -> (f :. BehaviourEnd x) b
 until b e = do ev <- cur e 
                liftFR (BehaviourEnd b ev)
 
+instance Functor (BehaviourEnd x) where fmap = liftM
+instance Applicative (BehaviourEnd x) where pure = return ; (<*>) = ap
 
 
 

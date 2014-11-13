@@ -1,10 +1,10 @@
-{-# LANGUAGE ViewPatterns,NoMonomorphismRestriction,MultiParamTypeClasses ,FlexibleContexts,TypeOperators, LambdaCase, ScopedTypeVariables, Rank2Types, GADTs, TupleSections,GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE FlexibleInstances,ConstraintKinds,ViewPatterns,NoMonomorphismRestriction,MultiParamTypeClasses ,FlexibleContexts,TypeOperators, LambdaCase, ScopedTypeVariables, Rank2Types, GADTs, TupleSections,GeneralizedNewtypeDeriving #-}
 
 module EventStream
  -- (EventStream, next, nextSim, (<@@>),filterJusts,filterE, silent,merge, foldB, EventM, emit, waitFor,runEventM)
   where
 
-import FRPNow
+import Base.FRPNow
 import Lib
 import Data.Maybe
 import Control.Monad hiding (when)
@@ -24,15 +24,10 @@ next e = head <$> nextSim e
 
 -- gets all next simultanious values
 nextSim :: EventStream a -> (Behaviour :. Event) [a]
-nextSim es =  unwrapES es >>= loop [] where
+nextSim es = nextSimI (unwrapES es) 
+
+nextSimI = (>>= loop []) where
   loop l (h :< t) = cur (getNow t) >>= maybe (return l) (loop (h : l))
-
-
-(<@@>) :: forall a b. Behaviour (a -> b) -> EventStream a -> EventStream b
-(<@@>) f b  = WrapES $ unwrapES b >>= loop where
-  loop (h :< t) = do v  <- cur f
-                     t' <- later (loop <$> t)
-                     return (v h :< t')
 
 once :: x -> EventStream x
 once x = WrapES $ return (x :< never)
@@ -40,21 +35,85 @@ once x = WrapES $ return (x :< never)
 silent :: EventStream a
 silent = WrapES $ Comp $ pure never
 
-switchES :: forall a. EventStream a -> EventStream a -> EventStream a
-switchES e s = WrapES $ do s' <- delay (unwrapES s)
-                           e' <- delay (unwrapES e)
-                           loop s' e' where
-  loop :: ES a -> ES a -> (Behaviour :. Event) (ESH a)
-  loop s l  =
-    do c <- firstObs l s
-       case c of
-         Left (lh :< lt) -> (lh :<) <$> delay (loop s lt)
-         Right r         -> pure r
+
+fmapB ::  Behaviour (a -> b) -> EventStream a -> EventStream b
+fmapB f es = WrapES $ unwrapES es >>= fmapBI f
+
+fmapBI :: Behaviour (t -> a) -> ESH t -> (Behaviour :. Event) (ESH a)
+fmapBI f (h :< t) = 
+    do fv <- cur f
+       t' <- plan (fmapBI f <$> t)
+       return (fv h :< t')
+
+-- associative!
+switchES :: EventStream a -> EventStream a -> EventStream a
+switchES l r = WrapES $ do l' <- delay (unwrapES l)
+                           r' <- delay (unwrapES r) 
+                           switchESI l' r' where
+switchESI :: ES a -> ES a -> (Behaviour :. Event) (ESH a)
+switchESI l r  =
+  do c <- firstObs l r
+     case c of
+       Left (lh :< lt) -> (lh :<) <$> delay (switchESI lt r)
+       Right r         -> pure r
+
+filterJusts :: EventStream (Maybe a) -> EventStream a
+filterJusts es = WrapES $ filterJustsI (unwrapES es) 
+
+filterJustsI :: (Behaviour :. Event) (ESH (Maybe a)) -> (Behaviour :. Event) (ESH a) 
+filterJustsI b = 
+  do h :< t <- b
+     let t' = filterJustsI (waitEv t)
+     case h of
+      Just x  -> (x :<) <$> delay t'
+      Nothing -> t'
+
+-- in case of simultaneity, the left elements come first
+merge :: EventStream a -> EventStream a -> EventStream a
+merge l r =  WrapES $ do l' <- delay (unwrapES l)
+                         r' <- delay (unwrapES r) 
+                         mergeI l' r' where
+
+mergeI :: ES a -> ES a -> (Behaviour :. Event) (ESH a)
+mergeI l r  =
+   do c <- firstObs r l
+      case c of
+        Right  (lh :< lt) -> (lh :<) <$> delay (mergeI lt r )
+        Left   (rh :< rt) -> (rh :<) <$> delay (mergeI l  rt)                   
+
+foldB :: (Behaviour a -> b -> Behaviour a) -> 
+         Behaviour a -> EventStream b -> Behaviour2 a
+foldB f i es = Comp $ decomp (unwrapES es) >>= pure . foldBI f i 
+
+foldBI :: (Behaviour a -> b -> Behaviour a) -> 
+         Behaviour a -> ES b -> Behaviour a
+foldBI f i e = i `switch` (cont <$> e) where
+  cont (h :< t) = foldBI f (f i h) t
+
+filterB :: Behaviour (a -> Bool) -> EventStream a -> EventStream a
+filterB b = filterJusts . fmapB (toMaybe <$> b) 
+
+filterE :: (a -> Bool) -> EventStream a -> EventStream a
+filterE f = filterB (pure f)
+ 
+toMaybe :: (a -> Bool) -> a -> Maybe a
+toMaybe f x = if f x then Just x else Nothing
+
+fold :: (a -> b -> a) -> a -> EventStream b -> Behaviour2 a
+fold f i = foldB (\x y -> f <$> x <*> pure y) (pure i)
+
+parList :: EventStream (BehaviourEnd a x) -> Behaviour2 [a]
+parList = foldB (flip (.:)) (pure []) 
+
+instance Functor EventStream where
+  fmap f = fmapB (pure f)
+
+flatES :: Event (EventStream x) -> EventStream x
+flatES e = WrapES $ waitEv e >>= unwrapES
 
 
-
--- Todo: Does this have performance problem? see paper "Reflection without Remorse" (plug, mine)
-data EventStreamEnd x a = EVE { stream :: EventStream x, esend :: Event a }
+-- Todo: Fix this have performance see paper "Reflection without Remorse" (plug, mine)
+data EventStreamEnd x a = EVE { stream :: EventStream x, esend :: Event a } 
 
 instance Monad (EventStreamEnd x) where
    return x = EVE silent (pure x)
@@ -63,62 +122,27 @@ instance Monad (EventStreamEnd x) where
                          es = fv >>= esend
                      in EVE (s `switchES` vs)  es
 
-flatES :: Event (EventStream x) -> EventStream x
-flatES e = WrapES $ wait e >>= unwrapES
-               
+instance Functor (EventStreamEnd x) where fmap = liftM
+instance Applicative (EventStreamEnd x) where pure = return ; (<*>) = ap
+          
+flipEVE :: (Functor f, FlipF Event f) => EventStreamEnd x (f a) -> f (EventStreamEnd x a)
+flipEVE (EVE b e) = EVE b <$> flipF e
 
 instance FlipF (EventStreamEnd x) Behaviour where
-  flipF (EVE b e) = EVE b <$> plan e
+  flipF = flipEVE
+
+instance FlipF (EventStreamEnd x) IO where
+  flipF = flipEVE
+
 
 instance Wait (EventStreamEnd x) where
-   wait e = EVE silent e
+   waitEv e = EVE silent e
 
 emitBase x = EVE (once x) (return ())
 
-emit :: (Monad f, Functor f, FlipF (EventStreamEnd x) f) => 
+
+
+emit :: (FAM f, FlipF (EventStreamEnd x) f) => 
           x -> (f :. EventStreamEnd x) ()
 emit = liftFR . emitBase
-
-filterJusts :: EventStream (Maybe a) -> EventStream a
-filterJusts b = WrapES $ unwrapES b >>= loop where
-  loop (h :< t) = 
-   let t' = wait t >>= loop
-   in case h of
-       Just x  -> (x :<) <$> delay t'
-       Nothing -> t'
-                   
-filterE :: (a -> Bool) -> EventStream a -> EventStream a
-filterE f b = filterJusts $ pure toMaybe <@@> b
-  where toMaybe x = if f x then Just x else Nothing
-
-
-
--- in case of simultanuaty, the left elements come first
-merge :: forall a. EventStream a -> EventStream a -> EventStream a
-merge l r = WrapES $ 
-  do lv <- delay (unwrapES l)
-     rv <- delay (unwrapES r)
-     loop lv rv where
-  loop :: ES a -> ES a -> (Behaviour :. Event) (ESH a)
-  loop l r = do v <- firstObs r l  
-                case v of
-                 Right (lh :< lt) -> (lh :<) <$> delay (loop lt r )
-                 Left  (rh :< rt) -> (rh :<) <$> delay (loop l  rt)
-
-
-
-foldB :: (Behaviour a -> b -> Behaviour a) -> 
-         Behaviour a -> EventStream b -> Behaviour2 a
-foldB f i e = Comp . fmap behaviour . decomp $ 
-                do e <- cur (decomp (unwrapES e))
-                   loop i e where
-    loop i e = do h :< t <- i `until` pure e
-                  loop (f i h) t
-
-fold :: (a -> b -> a) -> a -> EventStream b -> Behaviour2 a
-fold f i = foldB (\x y -> f <$> x <*> pure y) (pure i)
-              
-parList :: EventStream (BehaviourEnd a x) -> Behaviour2 [a]
-parList = foldB (flip (.:)) (pure []) 
-
 
