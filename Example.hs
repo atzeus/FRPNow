@@ -17,9 +17,10 @@ import Prelude hiding (until)
 
 main = do screen <- initSDL
           evs <- stream <$> decomp getEvents
-          bxs <- cur (decomp $ boxes evs)
-          drawAll screen bxs
-          return ()
+          --bxs <- cur (decomp $ boxes evs)
+          --drawAll screen bxs
+          printAll evs
+
           
 boxes :: EventStream SDL.Event -> Behaviour2 [Box]
 boxes evs = (\x -> [toBox x]) <$> mousePos where
@@ -124,7 +125,11 @@ getEvents = while $
      then stop
      else mapM_ emit r >> again
 
-
+printAll :: Show a => EventStream a -> IO ()
+printAll evs = forever $ 
+               do v <- cur (decomp (nextSim evs))
+                  x <- waitIO v
+                  putStrLn (show x)
 
 drawAll :: SDL.Surface -> Behaviour [Box] -> IO ()
 drawAll screen b =  forever $ 
@@ -151,7 +156,8 @@ initSDL = do  SDL.init [SDL.InitEverything]
 
 
 ioGetEvents :: IO [SDL.Event]
-ioGetEvents = do h <- SDL.waitEventBlocking
+ioGetEvents = do putStrLn "Getting evs!"
+                 h <- SDL.waitEvent
                  t <- loop
                  return (h : t)
   where loop = do h <- SDL.pollEvent 
