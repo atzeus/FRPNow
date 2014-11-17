@@ -21,10 +21,7 @@ withTime :: Event a -> Event (PastTime,a)
 withTime e = (,) <$> evTime e <*> e
 
 evTime :: Event a -> Event PastTime
-evTime (a :@ t) = t' :@ t where
-   t' = unsafePerformIO $ waitFor t
-   {-# NOINLINE t' #-}
-{-# NOINLINE evTime #-}
+evTime (a :@ t) = silentBlockTime t :@ t
 
 first :: Event a -> Event b -> Event (Either a b)
 first (a :@ ta) (b :@ tb) = 
@@ -36,11 +33,10 @@ first (a :@ ta) (b :@ tb) =
            (Just l, _      ) -> Left a
            (_     , Nothing) -> Right b   
 
-infoAt :: Event a -> PastTime -> Maybe (PastTime,a)
-infoAt (a :@ te) t = fmap (,a) $ te `pastTimeAt` t
+getEvent :: Event a -> Present (Maybe a)
+getEvent (a :@ t) = 
+  (\v -> if v then Just a else Nothing) <$> isNow t
 
-waitIO :: Event a -> IO a
-waitIO (a :@ t) = waitFor t >> return a
 
 instance Functor Event where
   fmap = liftM

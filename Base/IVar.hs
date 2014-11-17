@@ -9,6 +9,9 @@ import Debug.Trace
 
 newtype IVar a = IVar (MVar a)
 
+newDoneIVar :: a -> IO (IVar a)
+newDoneIVar a = IVar <$> newMVar a
+
 newIVar :: IO (IVar a)
 newIVar = IVar <$> newEmptyMVar
 
@@ -22,8 +25,6 @@ writeIVar (IVar r) a =
 readIVar :: IVar a -> IO (Maybe a)
 readIVar (IVar r) = tryReadMVar r
 
-
-valIVar :: IVar a -> a
-{-# NOINLINE valIVar #-}
-valIVar (IVar r) = unsafePerformIO $ takeMVar r
-
+silentBlockVal :: IVar a -> a
+silentBlockVal (IVar r) = unsafePerformIO $ takeMVar r
+{-# NOINLINE silentBlockVal #-}
