@@ -14,16 +14,15 @@ type Behaviour2 = (Behaviour :. Behaviour)
 -- because behaviour is commutative monad?
 
 instance FlipF IO Behaviour where flipF b = pure $ b >>= curIO
-instance FlipF Event IO where flipF = planIO
+instance FlipF Event Now where flipF = planIO
 instance FlipF Event Behaviour where flipF e = whenJust (Nothing `step` fmap (fmap Just) e)
 
 class Cur b where cur :: Behaviour a -> b a
-instance Cur IO where cur = curIO
+instance Cur Now where cur = curIO
 instance Cur Behaviour where cur = id
 instance (Cur l, Functor l, Applicative r) => Cur (l :. r) where cur = liftFL . cur 
 
 class Wait e where waitEv :: Event a -> e a
-instance Wait IO where waitEv = waitIO
 instance Wait Event where waitEv = id
 instance (Wait r, Applicative f) => Wait (f :. r) where waitEv = liftFR . waitEv
 
@@ -32,13 +31,13 @@ wait :: (Monad m, Wait m, Cur m) => Behaviour (Event b) -> m b
 wait b = cur b >>= waitEv
 
 class DoIO e where
-  asyncDo :: IO a -> e (Event a)
+  async :: IO a -> e (Event a)
 
-instance DoIO IO where
-  asyncDo = asyncIO
+instance DoIO Now where
+  async = asyncIO
 
-instance DoIO (Behaviour :. IO) where
-  asyncDo = liftFR . asyncDo
+instance DoIO (Behaviour :. Now) where
+  async = liftFR . asyncDo
 
 
 waitDo :: (DoIO l, Wait r,  FAM l, FAM r,  FlipF r l) =>

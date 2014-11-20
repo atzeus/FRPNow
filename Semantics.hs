@@ -83,9 +83,6 @@ asyncIO :: IO a -> Now (Event a)
 asyncIO m = \t -> do undefined -- ....
                      -- return (a :@ te) -- te > t
 
--- synchonrounsly do IO
-syncIO :: IO a -> Now a
-syncIO = undefined
 
 first :: Event a -> Event a -> Now (Event a)
 first (a :@ ta) (b :@ tb) t 
