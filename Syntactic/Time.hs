@@ -1,5 +1,5 @@
 {-# LANGUAGE LambdaCase,ExistentialQuantification,GADTs,GeneralizedNewtypeDeriving #-}
-module Syntactic.Time where
+module Syntactic.Time(Event,never,evNow,Now,runNow,syncIO,asyncIO,first,planIO, planFirst, RoundNr,getRound,checkAll) where
 
 import Control.Applicative
 import Control.Concurrent
@@ -23,10 +23,10 @@ instance Monad Event where
   (>>=) = Bind
 
 
-evPresent :: Event a -> Present (Maybe a)
-evPresent e = getEv <$> updateEv e
+evNow :: Event a -> Now (Maybe a)
+evNow e = getEv <$> updateEv e
 
-updateEv :: Event a -> Present (Event a)
+updateEv :: Event a -> Now (Event a)
 updateEv e = case e of
   Primitive ev -> getPrimEv ev >>= return . \case 
                    Just x  -> Ret x
@@ -43,6 +43,8 @@ getEv (Ret x) = Just x
 getEv  _      = Nothing
 
 primEv = Primitive
+
+-- end non-shared events
 -}
 
 
@@ -63,15 +65,16 @@ instance Monad Event where
   return x = newEv (Ret x)
   m >>= f  = newEv (Bind m f)
   
+never = newEv (Primitive Never)
 
 newEv :: EventSyntax a -> Event a
 newEv s = unsafePerformIO $ Ev <$> newMVar (-1,s)
 {-# NOINLINE newEv #-}
 
-evPresent :: Event a -> Present (Maybe a)
-evPresent e = updateEv e >> getEv e
+evNow :: Event a -> Now (Maybe a)
+evNow e = updateEv e >> getEv e
 
-getEv :: Event a -> Present (Maybe a)
+getEv :: Event a -> Now (Maybe a)
 getEv (Ev e) = 
   do (i,s) <- syncIO $ readMVar e
      case s of
@@ -80,7 +83,7 @@ getEv (Ev e) =
        _        -> return Nothing
 
 
-updateEv :: Event a -> Present (EventSyntax a)
+updateEv :: Event a -> Now (EventSyntax a)
 updateEv (Ev e) =
   do (i,s) <- syncIO $ takeMVar e
      j     <- getRound
@@ -96,7 +99,7 @@ updateEv (Ev e) =
     SameAs b     -> updateEv b >>= return . \case 
                       SameAs b' -> SameAs b'
                       _         -> s
-    Bind e f     -> evPresent e >>= \case 
+    Bind e f     -> evNow e >>= \case 
                      Just x -> do let v = f x
                                   updateEv v
                                   return (SameAs v)
@@ -109,57 +112,73 @@ updateEv (Ev e) =
 
 data PrimEv a = External (IORef (Maybe a))
               | Internal (MVar (Maybe a))
+              | Never
 
-newtype Present a = Present { runPresent' :: IO a } deriving (Functor, Applicative, Monad)
+newtype Now a = Now { runNow' :: IO a } deriving (Functor, Applicative, Monad)
 
-getPrimEv :: PrimEv a -> Present (Maybe a)
-getPrimEv (External r) = Present $ readIORef r
-getPrimEv (Internal r) = Present $ readMVar r
+getPrimEv :: PrimEv a -> Now (Maybe a)
+getPrimEv (External r) = Now $ readIORef r
+getPrimEv (Internal r) = Now $ readMVar r
+getPrimEv Never        = return Nothing
 
-getRound :: Present Int
-getRound = Present $ readMVar globalRound
+getRound :: Now Int
+getRound = Now $ readMVar globalRound
 
+data WatchEv a = WatchFirst [Event a]
 
-data Watch = forall a. Watch { evs :: [Event (Present a)], mvar :: MVar (Maybe a)}
+data Watch = forall a. Watch { evs :: [Event (Now a)], mvar :: MVar (Maybe a)}
 
-runPresent (Present p) = 
-  do 
-     takeMVar globalLock
-     p
+runNow :: Now (Event a) -> IO a
+runNow (Now p) = 
+  do takeMVar globalLock
+     e <- p
+     m <- newEmptyMVar 
+     runNow' $ planIO $ fmap (signalDone m) e
      globalFlag `seq` putMVar globalLock ()
+     takeMVar m
+  where signalDone :: MVar a -> a -> Now a
+        signalDone m x = syncIO $ putMVar m x >> return x
 
 
-asyncIO :: IO a -> Present (Event a)
+asyncIO :: IO a -> Now (Event a)
 asyncIO m = syncIO $ 
       do r <- newIORef Nothing
          forkIO $ m >>= setVal r
          return (primEv (External r))
-
-setVal r a = 
-  do takeMVar globalLock
-     writeIORef r (Just a)
-     putMVar globalLock ()
-     signal globalFlag
+ where setVal r a = 
+        do takeMVar globalLock
+           writeIORef r (Just a)
+           putMVar globalLock ()
+           signal globalFlag
               
 
-syncIO :: IO a -> Present a
-syncIO m = Present m
+syncIO :: IO a -> Now a
+syncIO m = Now m
 
-planFirst :: [Event (Present a)] -> Present (Event a)
-planFirst l = checkAll l >>= \case
+first :: [Event a] -> Now (Event a)
+first e = planFirst (map (fmap pure) e)
+
+planIO :: Event (Now a) -> Now (Event a)
+planIO e = planFirst [e]
+
+planFirst :: [Event (Now a)] -> Now (Event a)
+planFirst l = checkNows l >>= \case
                Just x -> return (return x)
                Nothing -> do m <- syncIO $ newMVar Nothing
                              syncIO $ addWatch (Watch l m)
                              return (primEv (Internal m))
-checkAll :: [Event (Present a)] -> Present (Maybe a)
+
+checkNows :: [Event (Now a)] -> Now (Maybe a)
+checkNows l = checkAll l >>= maybe (return Nothing) (Just <$>)
+
+checkAll :: [Event a] -> Now (Maybe a)
 checkAll []      = return Nothing
 checkAll (e : t) = 
-     evPresent e >>= \case
-        Just x  -> x >>= return . Just
+     evNow e >>= \case
+        Just x  -> return (Just x)
         Nothing -> checkAll t
 
-planIO :: Event (Present a)-> Present (Event a)
-planIO e = planFirst [e]
+
 
 update :: IO ()
 update = 
@@ -175,9 +194,10 @@ update =
      i <- takeMVar globalRound
      putMVar globalRound (i + 1)
      putMVar globalLock ()
+     --putStrLn "ending round!"
 
   where updateWatch x@(Watch l m) = forkIO $
-               runPresent' (checkAll l) >>= \case 
+               runNow' (checkNows l) >>= \case 
                       Just x  -> putMVar m (Just x)
                       Nothing -> do putMVar m Nothing
                                     addWatch x
@@ -188,6 +208,7 @@ update =
         
 addWatch x = do l <- takeMVar globalWatches
                 putMVar globalWatches (x : l)
+
 
 globalRound :: MVar Int
 globalRound = unsafePerformIO $ newMVar 0
@@ -201,6 +222,7 @@ globalWatches = unsafePerformIO $ newMVar []
 globalLock :: MVar ()
 globalLock = unsafePerformIO $ newMVar ()
 {-# NOINLINE globalLock #-}
+
 
 globalLoop = forever $ 
              do waitForSignal globalFlag

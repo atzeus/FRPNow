@@ -8,7 +8,7 @@ import Control.Applicative
 import Control.Monad
 import Control.Concurrent.MVar 
 import System.IO
-main = do runPresent (testb undefined); forever (threadDelay  1000000 )
+main = do runNow (testb )
 
 {-
 test2 =  
@@ -19,15 +19,17 @@ test2 =
       planIO (syncIO . print . show <$> first e1 e2)
       return ()
 -}
-testb v = 
-  do b <- count1 v 50000
-     e <- count1 v 1000
-     v <- cur $ whenJust ( (\x -> if x > 100 then Just 1 else Nothing) <$> b)
+testb = 
+  do b <- count1 500000
+     e <- count1 10000
+     v <- cur $ whenJust ( (\x -> if x > 20 then Just 1 else Nothing) <$> b)
      let b' = b `switch` (fmap return v)
-     showChanges (b')
-     return ()
+     let f = (,) <$> b' <*> e
+     m <- cur $ whenJust ( (\x -> if x == (1,2000) then Just (0,0) else Nothing) <$> f)
+     showChanges (f `switch` (fmap pure m))
+     return never
 
-showChanges :: (Eq a, Show a) => Behaviour a -> Present ()
+showChanges :: (Eq a, Show a) => Behaviour a -> Now ()
 showChanges b = loop where
  loop = do v <- cur b
            syncIO $ putStrLn (show v)
@@ -36,7 +38,7 @@ showChanges b = loop where
            return ()
   where  toJust v x = if v == x then Nothing else Just x
 
-sampleEvery :: (Eq a, Show a) => Int -> Behaviour a -> Present ()
+sampleEvery :: (Eq a, Show a) => Int -> Behaviour a -> Now ()
 sampleEvery delay b = loop where
  loop = do v <- cur b
            syncIO $ putStrLn (show v)
@@ -46,8 +48,8 @@ sampleEvery delay b = loop where
 
 
 
-count1 :: MVar () -> Int -> Present (Behaviour Int)
-count1 v delay = loop 0 where
+count1 :: Int -> Now (Behaviour Int)
+count1 delay = loop 0 where
   loop i = 
     do e <- asyncIO (threadDelay  delay)
        e' <- planIO (fmap (const (loop (i+1))) e)
