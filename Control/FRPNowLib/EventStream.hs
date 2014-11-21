@@ -1,7 +1,7 @@
 {-# LANGUAGE FlexibleInstances,ConstraintKinds,ViewPatterns,NoMonomorphismRestriction,MultiParamTypeClasses ,FlexibleContexts,TypeOperators, LambdaCase, ScopedTypeVariables, Rank2Types, GADTs, TupleSections,GeneralizedNewtypeDeriving #-}
 
 module Control.FRPNowLib.EventStream
- (EventStream, next, nextSim, once, silent ,fmapB, merge, filterJusts, foldB, fold, filterB, filterE, parList, EventStreamM(..), emit ,runEventStreamM)
+ (EventStream, next, nextSim, once, silent ,fmapB, merge, filterJusts, foldB, fold, filterB, filterE, parList, EventStreamEnd(..), emit)
   where
 
 import Control.FRPNowImpl.Event
@@ -21,8 +21,13 @@ newtype EventStream a = WrapES { unwrapES :: (Behaviour :. Event) (ESH a) }
 type ES a = Event (ESH a)
 data ESH a = a :< ES a
 
-wrap :: (Behaviour :. Event) (ESH a) -> EventStream a
-wrap b = WrapES $ close $  open b >>= wrappy
+switchWrap :: (Behaviour :. Event) (ESH a) -> EventStream a
+switchWrap b = WrapES $ close $  open b >>= wrappy
+
+wrappy :: Event (ESH a) -> Behaviour (Event (ESH a))
+wrappy e = pure e `switch` fmap loop e where
+  loop :: ESH a -> Behaviour (Event (ESH a))
+  loop (_ :< e) = pure e `switch` fmap loop e 
 
 next :: EventStream a -> (Behaviour :. Event) a
 next e = head <$> nextSim e
@@ -43,7 +48,7 @@ silent :: EventStream a
 silent = WrapES $ close $ pure never
 
 fmapB ::  Behaviour (a -> b) -> EventStream a -> EventStream b
-fmapB f es = wrap $ unwrapES es >>= fmapBI f
+fmapB f es = switchWrap $ unwrapES es >>= fmapBI f
 
 fmapBI :: Behaviour (t -> a) -> ESH t -> (Behaviour :. Event) (ESH a)
 fmapBI f (h :< t) = 
@@ -51,33 +56,28 @@ fmapBI f (h :< t) =
        t' <- plan (fmapBI f <$> t)
        return (fv h :< t')
 
--- associative!
-{-
-switchES :: EventStream a -> EventStream a -> EventStream a
-switchES l r = wrap $ do l' <- delay (unwrapES l)
-                         r' <- delay (unwrapES r) 
-                         switchESI l' r'
+-- associative! _no_ reflection without remorse problem (because we forget the past)
+switchES :: EventStream a -> Event (EventStream a) -> EventStream a
+switchES l r = WrapES $ close $ -- notice no switchWrap!
+  do ls     <- open (unwrapES l)
+     let r' = fmap (open . unwrapES) r
+     rs     <- join <$> plan r'
+     open (switchESI ls rs) `switch` r'
 
-                           let rr = open (unwrapES r)
-                           x  <- cur rr
-                           let x' = fmap (const rr) x
-                           close $ open (switchESI l' r') `switch` x' where
-
-
-switchESI :: ES a -> ES a -> (Behaviour :. (Event (ESH a))
+switchESI :: ES a -> ES a -> (Behaviour :. Event) (ESH a)
 switchESI l r  = loop l where
- loop i l =
+ loop l =
   do c <- firstObs l r
      case c of
-       Left (lh :< lt) -> (lh :<) <$> delay (loop (i+1) lt)
+       Left (lh :< lt) -> (lh :<) <$> delay (loop lt)
        Right r         -> pure r
 
--}
 -- in case of simultaneity, the left elements come first
 merge :: EventStream a -> EventStream a -> EventStream a
-merge l r =  wrap $ do l' <- delay (unwrapES l)
-                       r' <- delay (unwrapES r) 
-                       mergeI l' r' 
+merge l r =  switchWrap $
+   do l' <- delay (unwrapES l)
+      r' <- delay (unwrapES r) 
+      mergeI l' r' 
 
 mergeI :: ES a -> ES a -> (Behaviour :. Event) (ESH a)
 mergeI l r  =
@@ -87,7 +87,7 @@ mergeI l r  =
         Left   (rh :< rt) -> (rh :<) <$> delay (mergeI l  rt)    
 
 filterJusts :: EventStream (Maybe a) -> EventStream a
-filterJusts es = wrap $ filterJustsI (unwrapES es) 
+filterJusts es = switchWrap $ filterJustsI (unwrapES es) 
 
 filterJustsI :: (Behaviour :. Event) (ESH (Maybe a)) -> (Behaviour :. Event) (ESH a) 
 filterJustsI b = 
@@ -125,55 +125,19 @@ parList = foldB (flip (.:)) (pure [])
 instance Functor EventStream where
   fmap f = fmapB (pure f)
 
-flatES :: Event (EventStream x) -> EventStream x
-flatES e = wrap $ waitEv e >>= unwrapES
+data EventStreamEnd x a = EventStreamEnd { stream :: EventStream x, sEnd :: Event a }
 
+instance Monad (EventStreamEnd x) where
+  return x = EventStreamEnd  silent (return x)
+  m >>= f  = let nxt      = fmap f (sEnd m)
+                 stream'  = stream m `switchES` fmap stream nxt
+                 end'     = join (fmap sEnd nxt)
+             in EventStreamEnd stream' end'
 
-repeatEV ::  Now (Event a) -> Now (EventStream a)
-repeatEV m = do x <- loop
-                return (WrapES $ close $ wrappy x)  where
-  loop = do x <- m
-            x' <- planIO (fmap (\a -> (a :<) <$> loop) x)
-            return x' 
-            
+emit ::  x -> EventStreamEnd x ()
+emit x = EventStreamEnd (once x) (return ())
 
-wrappy :: Event (ESH a) -> Behaviour (Event (ESH a))
-wrappy e = pure e `switch` fmap loop e where
-  loop :: ESH a -> Behaviour (Event (ESH a))
-  loop (_ :< e) = pure e `switch` fmap loop e 
+instance Swap (EventStreamEnd x) Behaviour where
+  swap (EventStreamEnd b e) = EventStreamEnd b <$> plan e
 
-
-data EventStreamM b x a = EVE {fromEVE :: b (ES x, Event a)}
-
-instance (Monad b, Cur b,Swap Event b) => Monad (EventStreamM b x) where
-   return x = EVE $ return (never, return x)
-   (EVE b) >>= f = EVE $ do (s,a) <- b
-                            e2 <- plan $ fmap (fromEVE . f) a 
-                            let b = e2 >>= snd 
-                            s' <- cur $ open $ switchEVS s (e2 >>= fst)
-                            return (s',b) 
-
-instance (Cur b, Swap Event b, Monad b) => Wait (EventStreamM b x) where waitEv e = EVE $ return (never, e)                          
-
-instance (Cur b, Swap Event b, Monad b) => Cur (EventStreamM b x) where cur b = EVE $ do x <- cur b ; return (never, return x)
-
-emit :: Monad b => x -> EventStreamM b x ()
-emit x = EVE $ return (return (x :< never), return ())
-
-runEventStreamM :: Monad b =>  EventStreamM b x a -> b (EventStream x, Event a)
-runEventStreamM (EVE b) = do (s,a) <- b
-                             return (WrapES $ close (wrappy s), a)
-                            
-switchEVS :: ES a -> ES a -> (Behaviour :. Event) (ESH a)
-switchEVS l r  = loop l where
- loop l =
-  do c <- firstObs l r
-     case c of
-       Left (lh :< lt) -> (lh :<) <$> delay (loop lt)
-       Right r         -> pure r
-
-
-instance (Cur b, Monad b, Swap Event b) => Functor (EventStreamM b x) where fmap = liftM
-instance (Cur b, Monad b, Swap Event b) => Applicative (EventStreamM b x) where pure = return ; (<*>) = ap
-          
-
+instance Wait (EventStreamEnd x) where waitEv e = EventStreamEnd silent e
