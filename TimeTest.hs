@@ -1,7 +1,6 @@
 
 
-import Syntactic.Behaviour
-import Syntactic.Time
+import Control.FRPNow
 
 import Control.Concurrent
 import Control.Applicative

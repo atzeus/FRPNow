@@ -1,5 +1,5 @@
 {-# LANGUAGE LambdaCase,ExistentialQuantification,GADTs,GeneralizedNewtypeDeriving #-}
-module Syntactic.Time(Event,never,evNow,Now,runNow,syncIO,asyncIO,first,planIO, planFirst, RoundNr,getRound,checkAll) where
+module Control.FRPNowImpl.Event(Event,never,evNow,Now,runNow,syncIO,asyncIO,first,planIO, planFirst, RoundNr,getRound,checkAll) where
 
 import Control.Applicative
 import Control.Concurrent
@@ -7,7 +7,7 @@ import Control.Concurrent.MVar
 import Data.IORef 
 import Control.Monad
 import System.IO.Unsafe
-import Syntactic.ConcFlag
+import Control.FRPNowImpl.ConcFlag
 
 {-
 

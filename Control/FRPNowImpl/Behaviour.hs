@@ -1,10 +1,10 @@
 {-# LANGUAGE LambdaCase,ExistentialQuantification,GADTs,GeneralizedNewtypeDeriving #-}
 
-module Syntactic.Behaviour(Behaviour,switch, whenJust,seqB,cur) where
+module Control.FRPNowImpl.Behaviour(Behaviour,switch, whenJust,seqB,curIO) where
 
 import Data.Sequence
 import Control.Applicative hiding (empty,Const)
-import Syntactic.Time
+import Control.FRPNowImpl.Event
 import Data.Foldable
 import Control.Monad
 import System.IO.Unsafe
@@ -95,8 +95,8 @@ instance Monad Behaviour where
 type BehaviourNF a = (a, Seq (Event ()))
 
 
-cur :: Behaviour a -> Now a
-cur m = fst <$> getNormalForm m
+curIO :: Behaviour a -> Now a
+curIO m = fst <$> getNormalForm m
 
 getNormalForm :: Behaviour a -> Now (BehaviourNF a)
 getNormalForm bh@(B s m) = 
@@ -132,7 +132,7 @@ getNormalForm bh@(B s m) =
   WhenJust b -> do (a,s) <- getNormalForm b
                    ev <- case a of
                      Just x  -> return $ return x
-                     Nothing -> let again = fmap $ const $ cur bh
+                     Nothing -> let again = fmap $ const $ curIO bh
                                 in join <$> planFirst (fmap again (toList s))
                    return (ev,s)
 

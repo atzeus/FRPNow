@@ -1,4 +1,4 @@
-module Syntactic.ConcFlag where
+module Control.FRPNowImpl.ConcFlag where
 
 import Control.Concurrent.MVar
 

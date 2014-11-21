@@ -7,19 +7,30 @@ import Graphics.UI.SDL.Keysym
 import Control.Applicative hiding (empty)
 import Control.Concurrent
 import Control.Monad hiding (when)
-import Base.FRPNow 
-import FunctorCompose
-import Lib
-import EventStream
+import Control.FRPNow 
 import Debug.Trace
-import Data.Set hiding (filter,fold)
+import Data.Maybe
+import Data.Set hiding (filter,fold, foldl,map)
 import Prelude hiding (until)
 
 main = do screen <- initSDL
-          evs <- stream <$> decomp getEvents
-          --bxs <- cur (decomp $ boxes evs)
-          --drawAll screen bxs
-          printAll evs
+          runNow $
+              do (evs,quit) <- getEvents
+                 printAll (filterJusts (fmap choosemm evs))
+
+                 bxs <- cur (open $ boxes (fmap head evs))
+                 drawAll screen bxs
+
+                 return quit
+
+choosemm l = let x = catMaybes ( map choosem l)
+             in case x of
+                 [] -> Nothing
+                 x -> Just x 
+                
+
+choosem (SDL.MouseButtonDown _ _ m) = Just m
+choosem _ = Nothing
 
           
 boxes :: EventStream SDL.Event -> Behaviour2 [Box]
@@ -115,31 +126,65 @@ toM _             = Nothing
 
 toMousePos :: EventStream SDL.Event -> Behaviour2 Point
 toMousePos = fold getMousePos (0.0,0.0)
-  where getMousePos p (SDL.MouseMotion x y _ _) = (fromIntegral x, fromIntegral y)
-        getMousePos p _                         = p
 
-getEvents ::  (IO :. EventStreamEnd SDL.Event) ()
-getEvents = while $ 
-  do r <- waitDo ioGetEvents
-     if filter (== SDL.Quit) r /= []
-     then stop
-     else mapM_ emit r >> again
+getMousePos p (SDL.MouseMotion x y _ _) = (fromIntegral x, fromIntegral y)
+getMousePos p _                         = p
 
-printAll :: Show a => EventStream a -> IO ()
-printAll evs = forever $ 
-               do v <- cur (decomp (nextSim evs))
-                  x <- waitIO v
-                  putStrLn (show x)
+getMouse ::  Now (Behaviour Point)
+getMouse = loop (0,0) where
+  loop :: Point -> Now (Behaviour Point)
+  loop p =  do e <- async ioGetEvents
+               let e' = foldl getMousePos p <$> e
+               e'' <- plan (fmap loop e')
+               return (pure p `switch` e'')
 
-drawAll :: SDL.Surface -> Behaviour [Box] -> IO ()
-drawAll screen b =  forever $ 
+
+getEvents ::  Now (EventStream SDL.Event, Event ())
+getEvents = runEventStreamM $ loop where
+ loop = 
+  do l <- waitIO ioGetEvents
+     if filter (== SDL.Quit) l /= []
+     then return ()
+     else mapM_ emit l >> loop
+
+
+printAll :: (Show a, Eq a) => EventStream a -> Now ()
+printAll evs = do e2 <- cur (open (nextSim evs))
+                  plan (fmap loop e2)
+                  return () where
+  loop l = 
+      do async (putStrLn (show l)) >> return ()
+         e2 <- cur (open (nextSim evs))
+         plan (fmap loop e2)
+         return () 
+            
+            
+            
+showChanges :: (Eq a, Show a) => Behaviour a -> Now ()
+showChanges b = loop where
+ loop = do v <- cur b
+           syncIO $ putStrLn (show v)
+           e <- cur $ whenJust (toJust v <$> b)
+           e' <- planIO (fmap (const (loop)) e)
+           return ()
+  where  toJust v x = if v == x then Nothing else Just x
+
+drawAll :: SDL.Surface -> Behaviour [Box] -> Now ()
+drawAll screen b = loop where
+  loop :: Now ()
+  loop =
    do v <- cur b
-      drawBoxes screen v
-      wait $ change b
+      e <- cur $ change b
+      e' <- asyncIO $ drawBoxes screen v
+      planIO (fmap (const loop) (e >> e'))
+      return ()
+      
 
 
 -- nice while thing
+again :: Monad m => m Bool
 again = return True
+stop :: Monad m => m Bool
 stop = return False
 
 while :: Monad m => m Bool -> m ()
@@ -156,8 +201,7 @@ initSDL = do  SDL.init [SDL.InitEverything]
 
 
 ioGetEvents :: IO [SDL.Event]
-ioGetEvents = do putStrLn "Getting evs!"
-                 h <- SDL.waitEvent
+ioGetEvents = do h <- SDL.waitEvent
                  t <- loop
                  return (h : t)
   where loop = do h <- SDL.pollEvent 

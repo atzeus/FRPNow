@@ -1,52 +1,47 @@
 {-# LANGUAGE NoMonomorphismRestriction,FlexibleInstances , MultiParamTypeClasses,GADTs, TypeOperators, TupleSections, ScopedTypeVariables,ConstraintKinds,FlexibleContexts,UndecidableInstances #-}
 
-module Lib where
+module Control.FRPNowLib.Lib where
 
-import Base.FRPNow 
+import Control.FRPNowImpl.Event
+import Control.FRPNowImpl.Behaviour
 import Control.Applicative
 import Control.Monad hiding (when,until)
 
 import Prelude hiding (until)
-import FunctorCompose
+import Control.Monad.Swap
 
 type Behaviour2 = (Behaviour :. Behaviour)
+instance Swap Now Behaviour where swap n = return (n >>= curIO)
+instance Swap Event Now where swap = planIO
+instance Swap Event Behaviour where swap e = whenJust (Nothing `step` fmap (fmap Just) e)
 
--- because behaviour is commutative monad?
+plan = swap
 
-instance FlipF IO Behaviour where flipF b = pure $ b >>= curIO
-instance FlipF Event Now where flipF = planIO
-instance FlipF Event Behaviour where flipF e = whenJust (Nothing `step` fmap (fmap Just) e)
-
-class Cur b where cur :: Behaviour a -> b a
+class Monad b => Cur b where cur :: Behaviour a -> b a
 instance Cur Now where cur = curIO
 instance Cur Behaviour where cur = id
-instance (Cur l, Functor l, Applicative r) => Cur (l :. r) where cur = liftFL . cur 
+instance (Cur l, Monad l, Monad r, Swap r l) => Cur (l :. r) where cur = liftLeft . cur 
 
-class Wait e where waitEv :: Event a -> e a
+class Monad e => Wait e where waitEv :: Event a -> e a
 instance Wait Event where waitEv = id
-instance (Wait r, Applicative f) => Wait (f :. r) where waitEv = liftFR . waitEv
+instance (Wait r, Monad l, Swap r l) => Wait (l :. r) where waitEv = liftRight . waitEv
 
 
-wait :: (Monad m, Wait m, Cur m) => Behaviour (Event b) -> m b
+wait :: (Wait m, Cur m) => Behaviour (Event b) -> m b
 wait b = cur b >>= waitEv
 
-class DoIO e where
+class Monad e=>  DoIO e where
   async :: IO a -> e (Event a)
 
 instance DoIO Now where
   async = asyncIO
 
 instance DoIO (Behaviour :. Now) where
-  async = liftFR . asyncDo
+  async = liftRight . async
 
 
-waitDo :: (DoIO l, Wait r,  FAM l, FAM r,  FlipF r l) =>
-          IO b -> (l :. r) b
-waitDo m = liftFL (asyncDo m) >>= waitEv
-
-
-plan = flipF
-
+waitIO :: (DoIO l, Wait r,  Swap r l) => IO a -> (l :. r) a
+waitIO m = liftLeft (async m) >>= waitEv
 
 
 
@@ -86,7 +81,7 @@ zipBE f (BehaviourEnd bx e) b = (f <$> bx <*> b) `switch` fmap (const b) e
 (.:) = zipBE (:)
 
 delay :: Functor f => (f :. Event) x -> (f :. Event) (Event x)
-delay  = Comp . fmap return . decomp
+delay  = close . fmap return . open
 
 data BehaviourEnd x a = BehaviourEnd { behaviour :: Behaviour x, end ::  Event a }
 
@@ -97,13 +92,13 @@ instance Monad (BehaviourEnd x) where
                  e = v >>= end
               in BehaviourEnd b e
 
-instance FlipF (BehaviourEnd x) Behaviour where
-  flipF (BehaviourEnd b e) = BehaviourEnd b <$> plan e
+instance Swap (BehaviourEnd x) Behaviour where
+  swap (BehaviourEnd b e) = BehaviourEnd b <$> plan e
 
-until :: (FAM f, FlipF (BehaviourEnd x) f, Cur f) => 
+until :: (Cur f, Swap (BehaviourEnd x) f) => 
          Behaviour x -> Behaviour (Event b) -> (f :. BehaviourEnd x) b
 until b e = do ev <- cur e 
-               liftFR (BehaviourEnd b ev)
+               liftRight (BehaviourEnd b ev)
 
 instance Functor (BehaviourEnd x) where fmap = liftM
 instance Applicative (BehaviourEnd x) where pure = return ; (<*>) = ap
