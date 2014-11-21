@@ -16,7 +16,7 @@ import Prelude hiding (until)
 import Debug.Trace
 
 
-type EventStream a = Behaviour (Event (ESH a)) 
+type EventStream a = (Behaviour :. Event) (ESH a)
 
 data ESH a = a :< EventStream a
 {-
@@ -59,27 +59,27 @@ fmapBI f (h :< t) =
 -- in case of simultaneity, the left elements come first
 merge :: EventStream a -> EventStream a -> EventStream a
 merge l r = 
-   do l' <- l
-      r' <- r
-      e <- open (firstObs l' r')
-      return (fmap nxt e)  where
-
-   nxt (Left  (l :< lt)) = l :< merge lt r
-   nxt (Right (r :< rt)) = r :< merge l rt
-
-
-
-switchES :: EventStream a -> Event (EventStream a) -> EventStream a
-switchES l r = merge l (flatES r) `switch` r
-
-flatES :: Event (EventStream a) -> EventStream a
-flatES e = join <$> plan e
+   do l' <- cur (open l)
+      r' <- cur (open r)
+      e <- firstObs l' r'
+      return $ case e of
+        Left  (l :< lt) -> l :< merge lt r
+        Right (r :< rt) -> r :< merge l rt
 
 fmapB :: Behaviour (a -> b) -> EventStream a -> EventStream b
 fmapB f b = 
-    do e <- b
-       plan (fmap nxt e)
-  where nxt (h :< t) = do fv <- f ; return (fv h :< fmapB f t)
+    do h :< t <- b
+       fv <- cur f
+       return (fv h :< fmapB f t)
+
+switchES :: EventStream a -> Event (EventStream a) -> EventStream a
+switchES l r = close $ open (merge l (flatES r)) `switch` (fmap open r)
+
+flatES :: Event (EventStream a) -> EventStream a
+flatES e = close $ join <$> plan (fmap open e)
+
+
+
 
 {-
 switchES l r = ES $ close $ -- notice no switchWrap!
