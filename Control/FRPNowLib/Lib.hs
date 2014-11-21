@@ -92,8 +92,8 @@ instance Monad (BehaviourEnd x) where
                  e = v >>= end
               in BehaviourEnd b e
 
-instance Swap (BehaviourEnd x) Behaviour where
-  swap (BehaviourEnd b e) = BehaviourEnd b <$> plan e
+instance (Monad b, Swap Event b) => Swap (BehaviourEnd x) b where
+  swap (BehaviourEnd b e) = liftM (BehaviourEnd b) (plan e)
 
 until :: (Cur f, Swap (BehaviourEnd x) f) => 
          Behaviour x -> Behaviour (Event b) -> (f :. BehaviourEnd x) b

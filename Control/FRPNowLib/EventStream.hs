@@ -16,11 +16,10 @@ import Prelude hiding (until)
 import Debug.Trace
 
 
-newtype EventStream a = WrapES { unwrapES :: (Behaviour :. Event) (ESH a) }
+type EventStream a = Behaviour (Event (ESH a)) 
 
-type ES a = Event (ESH a)
-data ESH a = a :< ES a
-
+data ESH a = a :< EventStream a
+{-
 switchWrap :: (Behaviour :. Event) (ESH a) -> EventStream a
 switchWrap b = WrapES $ close $  open b >>= wrappy
 
@@ -55,29 +54,50 @@ fmapBI f (h :< t) =
     do fv <- cur f
        t' <- plan (fmapBI f <$> t)
        return (fv h :< t')
-
--- associative! _no_ reflection without remorse problem (because we forget the past)
-switchES :: EventStream a -> Event (EventStream a) -> EventStream a
-switchES l r = WrapES $ close $ -- notice no switchWrap!
-  do ls     <- open (unwrapES l)
-     let r' = fmap (open . unwrapES) r
-     rs     <- join <$> plan r'
-     open (switchESI ls rs) `switch` r'
-
-switchESI :: ES a -> ES a -> (Behaviour :. Event) (ESH a)
-switchESI l r  = loop l where
- loop l =
-  do c <- firstObs l r
-     case c of
-       Left (lh :< lt) -> (lh :<) <$> delay (loop lt)
-       Right r         -> pure r
+-}
 
 -- in case of simultaneity, the left elements come first
 merge :: EventStream a -> EventStream a -> EventStream a
-merge l r =  switchWrap $
-   do l' <- delay (unwrapES l)
-      r' <- delay (unwrapES r) 
-      mergeI l' r' 
+merge l r = 
+   do l' <- l
+      r' <- r
+      e <- open (firstObs l' r')
+      return (fmap nxt e)  where
+
+   nxt (Left  (l :< lt)) = l :< merge lt r
+   nxt (Right (r :< rt)) = r :< merge l rt
+
+
+
+switchES :: EventStream a -> Event (EventStream a) -> EventStream a
+switchES l r = merge l (flatES r) `switch` r
+
+flatES :: Event (EventStream a) -> EventStream a
+flatES e = join <$> plan e
+
+fmapB :: Behaviour (a -> b) -> EventStream a -> EventStream b
+fmapB f b = 
+    do e <- b
+       plan (fmap nxt e)
+  where nxt (h :< t) = do fv <- f ; return (fv h :< fmapB f t)
+
+{-
+switchES l r = ES $ close $ -- notice no switchWrap!
+  do rs     <- ES . join  <$> plan (fmap unwrapES r)
+     switchES' l rs where
+  switchES' :: EventStream a -> EventStream a -> EventStream a
+  switchES' l r = 
+
+
+switchESI :: Event (ES a -> ES a -> Behaviour (ES a)
+switchESI l r  = loop l where
+ loop l = do c <- open $ firstObs l r
+             plan $ fmap nxt c 
+             where nxt (Right r)       = pure r
+                   nxt (Left (l :< t)) = (l :<) <$> loop t
+  
+
+
 
 mergeI :: ES a -> ES a -> (Behaviour :. Event) (ESH a)
 mergeI l r  =
@@ -134,10 +154,12 @@ instance Monad (EventStreamEnd x) where
                  end'     = join (fmap sEnd nxt)
              in EventStreamEnd stream' end'
 
-emit ::  x -> EventStreamEnd x ()
-emit x = EventStreamEnd (once x) (return ())
+emit :: (Monad f, Swap (EventStreamEnd x) f) => x -> (f :. EventStreamEnd x) ()
+emit x = liftRight (EventStreamEnd (once x) (return ()))
 
-instance Swap (EventStreamEnd x) Behaviour where
-  swap (EventStreamEnd b e) = EventStreamEnd b <$> plan e
+
+instance (Monad b, Swap Event b) => Swap (EventStreamEnd x) b where
+  swap (EventStreamEnd b e) = liftM (EventStreamEnd b) (plan e)
 
 instance Wait (EventStreamEnd x) where waitEv e = EventStreamEnd silent e
+-}
