@@ -71,7 +71,7 @@ data SwitchState a = Before { curB :: Behaviour a, ev :: Event (Behaviour a) }
 data BehaviourSyntax a where
  Const    :: a -> BehaviourSyntax a
  Switch   :: MVar (SwitchState a) -> BehaviourSyntax a
- Bnd      :: Behaviour a -> (a -> Behaviour b) -> BehaviourSyntax b
+ Bnd      :: MVar (Maybe (Behaviour b)) -> Behaviour a -> (a -> Behaviour b) -> BehaviourSyntax b
  SameAs   :: Behaviour a -> BehaviourSyntax a
  WhenJust :: Behaviour (Maybe a) -> BehaviourSyntax (Event a)
  SeqB     :: Behaviour x -> Behaviour a -> BehaviourSyntax a
@@ -90,55 +90,59 @@ seqB x b   = newBehaviour (SeqB x b)
 
 instance Monad Behaviour where
   return  = newBehaviour . Const
-  m >>= f = newBehaviour (Bnd m f)
+  m >>= f = newBehaviour $ Bnd (unsafePerformIO $ newMVar $ Nothing) m f
+  {-# NOINLINE (>>=) #-}
 
-type BehaviourNF a = (a, Seq (Event ()))
+type BehaviourNF a = (a, Seq (Event ()), RoundNr)
 
 
 curIO :: Behaviour a -> Now a
-curIO m = fst <$> getNormalForm m
+curIO m = (\(x,_,_) -> x) <$> getNormalForm m
 
 getNormalForm :: Behaviour a -> Now (BehaviourNF a)
 getNormalForm bh@(B s m) = 
   do v <- syncIO $ takeMVar m
-     j <- getRound
+     i <- getRound
      nf <- case v of
-      Just (i,nf@(a,evs)) 
+      Just (j,nf@(a,evs,_)) 
 
-      --  | i == j    -> return nf
+        | i == j    -> return nf
         | otherwise -> checkAll (toList evs) >>= \case 
-                        Just _  -> getNF s
+                        Just _  -> getNF i s
                         Nothing -> return nf
-      _             -> getNF s
-     syncIO $ putMVar m (Just (j,nf))
+      _             -> getNF i s
+     syncIO $ putMVar m (Just (i,nf))
      return nf  where
- getNF e =  case e of
-  Const x -> return (x,empty)
+ getNF i e =  case e of
+  Const x -> return (x,empty,-1)
 
 
   Switch sm -> do trySwitch sm
                   st <- syncIO $ readMVar sm
                   nf <- case st of
-                     Before b e -> (\(x,l) -> (x, fmap (const ()) e <| l)) <$> getNormalForm b
+                     Before b e -> (\(x,l,z) -> (x, fmap (const ()) e <| l,z)) <$> getNormalForm b
                      After b    -> getNormalForm b
                   normalizeSwitch sm
                   return nf
                   
 
-  Bnd b f -> do (a,sa) <- getNormalForm b 
-                (b,sb) <- a `seq` getNormalForm (f a)
-                return (b,sa >< sb) 
+  Bnd m b f -> do (a,sa,z) <- getNormalForm b 
+                  v <- syncIO $ readMVar m
+                  (b,sb,_) <- case v of
+                              Just x | z < i -> getNormalForm x
+                              _              -> a `seq` getNormalForm (f a)
+                  return (b,sa >< sb,i) 
 
-  WhenJust b -> do (a,s) <- getNormalForm b
+  WhenJust b -> do (a,s,_) <- getNormalForm b
                    ev <- case a of
                      Just x  -> return $ return x
                      Nothing -> let again = fmap $ const $ curIO bh
                                 in join <$> planFirst (fmap again (toList s))
-                   return (ev,s)
+                   return (ev,s,i)
 
-  SeqB a b ->  do (av,_ ) <- getNormalForm a 
-                  (bv,sb) <- getNormalForm b
-                  return (av `seq` bv, sb)
+  SeqB a b ->  do (av,_ ,_) <- getNormalForm a 
+                  (bv,sb,_) <- getNormalForm b
+                  return (av `seq` bv, sb,i)
 
 trySwitch :: MVar (SwitchState a) -> Now ()
 trySwitch m = 
