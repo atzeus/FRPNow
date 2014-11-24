@@ -51,11 +51,14 @@ step a s = pure a `switch` s
 getNow :: Event a -> Behaviour (Maybe a)
 getNow e = pure Nothing `switch` fmap (pure . Just) e
 
-firstObs :: Event a -> Event b -> (Behaviour :. Event) (Either a b)
-firstObs l r = Comp $ whenJust $ combineMaybe <$> getNow l <*> getNow r where
-  combineMaybe _  (Just r) = Just (Right r)
-  combineMaybe (Just l) _  = Just (Left l)
-  combineMaybe _ _         = Nothing
+data First a b = L a | R b | Tie a b
+
+firstObs :: Event a -> Event b -> Behaviour (Event (First a b))
+firstObs l r = whenJust $ combineMaybe <$> getNow l <*> getNow r where
+  combineMaybe (Just l) (Just r) = Just (Tie l r)
+  combineMaybe (Just l) Nothing  = Just (L   l  )
+  combineMaybe Nothing  (Just r) = Just (R     r)
+  combineMaybe Nothing  Nothing  = Nothing
 
 
 when :: Behaviour Bool -> Behaviour (Event ())
