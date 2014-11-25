@@ -15,10 +15,10 @@ import Prelude hiding (until)
 
 main = do screen <- initSDL
           runNow $
-              do (EventStreamEnd evs quit) <- open getEvents
+              do (evs, quit) <- runEventStreamM <$> open getEvents
                  printAll (filterJusts (fmap choosem evs))
 
-                 bxs <- cur (open $ boxes evs)
+                 bxs <- cur (boxes evs)
                  drawAll screen bxs
 
                  return quit
@@ -33,9 +33,10 @@ choosem (SDL.MouseButtonDown _ _ m) = Just m
 choosem _ = Nothing
 
           
-boxes :: EventStream SDL.Event -> Behaviour2 [Box]
-boxes evs = (\x -> [toBox x]) <$> mousePos where
-  mousePos = toMousePos evs
+boxes :: EventStream SDL.Event -> Behaviour (Behaviour [Box])
+boxes evs = do mousePos <- toMousePos evs
+               return $ (\x -> [toBox x]) <$> mousePos
+    where
   toBox p = Box (normalize $ Rect (100,100) p) red
 
 {-
@@ -113,7 +114,7 @@ click m b = becomesTrue $ isDown m b
 release m b = becomesTrue $ not <$> isDown m b
   
 -}
-toMouseButtonsDown :: EventStream SDL.Event -> Behaviour2 (Set MouseBtn)
+toMouseButtonsDown :: EventStream SDL.Event -> Behaviour (Behaviour (Set MouseBtn))
 toMouseButtonsDown = fold updateSet empty where
   updateSet s (SDL.MouseButtonDown _ _ m) | Just m' <- toM m = insert m' s
   updateSet s (SDL.MouseButtonUp   _ _ m) | Just m' <- toM m = delete m' s
@@ -124,7 +125,7 @@ toM SDL.ButtonMiddle  = Just MMiddle
 toM SDL.ButtonRight   = Just MRight
 toM _             = Nothing
 
-toMousePos :: EventStream SDL.Event -> Behaviour2 Point
+toMousePos :: EventStream SDL.Event -> Behaviour (Behaviour Point)
 toMousePos = fold getMousePos (0.0,0.0)
 
 getMousePos p (SDL.MouseMotion x y _ _) = (fromIntegral x, fromIntegral y)
@@ -139,7 +140,7 @@ getMouse = loop (0,0) where
                return (pure p `switch` e'')
 
 
-getEvents ::  (Now :. EventStreamEnd SDL.Event) ()
+getEvents ::  (Now :. EventStreamM SDL.Event) ()
 getEvents = loop where
  loop = 
   do l <- waitIO ioGetEvents
@@ -149,12 +150,12 @@ getEvents = loop where
 
 
 printAll :: (Show a, Eq a) => EventStream a -> Now ()
-printAll evs = do e2 <- cur (open (nextSim evs))
+printAll evs = do e2 <- cur (nextSim evs)
                   plan (fmap loop e2)
                   return () where
   loop l = 
       do async (putStrLn (show l)) >> return ()
-         e2 <- cur (open (nextSim evs))
+         e2 <- cur (nextSim evs)
          plan (fmap loop e2)
          return () 
             

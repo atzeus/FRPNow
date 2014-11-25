@@ -1,12 +1,13 @@
-{-# LANGUAGE FlexibleInstances,ConstraintKinds,ViewPatterns,NoMonomorphismRestriction,MultiParamTypeClasses ,FlexibleContexts,TypeOperators, LambdaCase, ScopedTypeVariables, Rank2Types, GADTs, TupleSections,GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE DeriveFunctor,FlexibleInstances,ConstraintKinds,ViewPatterns,NoMonomorphismRestriction,MultiParamTypeClasses ,FlexibleContexts,TypeOperators, LambdaCase, ScopedTypeVariables, Rank2Types, GADTs, TupleSections,GeneralizedNewtypeDeriving #-}
 
 module Control.FRPNowLib.EventStream
--- (EventStream, next, nextSim, once, silent ,fmapB, merge, filterJusts, foldB, fold, filterB, filterE, parList, EventStreamEnd(..), emit)
+ (EventStream, next, nextSim, emptyEs, merge, switchEs, singleton, fmapB, filterJusts, foldB, fold,  EventStreamM, emit,runEventStreamM)
   where
 
 import Control.FRPNowImpl.Event
 import Control.FRPNowImpl.Behaviour
 import Control.FRPNowLib.Lib
+import Control.Monad.Free.Reflectable
 import Data.Maybe
 import Control.Monad hiding (when)
 import Control.Applicative
@@ -18,6 +19,11 @@ import Debug.Trace
 
 newtype EventStream a = Es { getEs :: Behaviour (Event [a]) }
 
+next :: EventStream a -> Behaviour (Event a)
+next e = fmap head <$> getEs e
+
+nextSim :: EventStream a -> Behaviour (Event [a]) 
+nextSim e = getEs e
 
 
 -- in case of simultaneity, the left elements come first
@@ -46,11 +52,6 @@ emptyEs = Es $ return never
 singleton :: Event a -> EventStream a
 singleton e = Es $ pure (fmap (\x -> [x]) e) `switch` fmap (const (getEs emptyEs)) e
 
-csingleton :: Event [a] -> EventStream a
-csingleton e = Es $ let e' = e >>= \case 
-                                [] -> never
-                                l  -> return l
-                    in pure e' `switch` fmap (const (getEs emptyEs)) e'
 
 fmapB :: Behaviour (a -> b) -> EventStream a -> EventStream b
 fmapB f es = loop where
@@ -88,14 +89,70 @@ fold :: (a -> b -> a) -> a -> EventStream b -> Behaviour (Behaviour a)
 fold f i = foldB f' (pure i)
   where f' b x = (\b -> f b x) <$> b
 
+newtype EmitStream x = Emit { getEmit :: Behaviour ([x], EventStream x) }
 
--- Event (EventStream x) cannot emit when the event occurs!
-flatEventStream :: Event ([x], EventStream x) -> EventStream x
-flatEventStream e = csingleton (fmap fst e) `switchEs` flatEs (fmap snd e)
- where flatEs es = Es $ join <$> plan (fmap getEs es)
+emptyEmits = Emit (return ([], emptyEs ))
+
+singleEmit x = Emit (return ([x],emptyEs))
+
+toEventStream :: Event (EmitStream x) -> EventStream x
+toEventStream em = Es $ 
+    do e <- plan (fmap (firstEv . getEmit)  em)
+       let ea = join (fmap fst e)
+       let es = fmap snd e
+       pure ea `switch` es where
+                           
+   firstEv :: Behaviour ([x], EventStream x) -> Behaviour (Event [x], Behaviour (Event [x]))
+   firstEv b = do (l,s) <- b
+                  e <- case l of
+                     [] -> getEs s 
+                     l  -> return (return l)
+                  return (e,getEs s)
+
+tailEmit :: EmitStream x -> EventStream x
+tailEmit (Emit b) = Es $ do (_,s) <- b
+                            getEs s
+
+switchEmit :: EmitStream x -> Event (EmitStream x) -> EmitStream x
+switchEmit (Emit b) es = Emit $ 
+   do (l,s) <- b
+      getNow es >>= \case 
+         Just eb   -> do (r,sr) <- getEmit eb; return (l ++ r,sr)
+         Nothing   -> return (l, s `switchEs` toEventStream es)
+
+data EventStreamM x a = EventStreamM { emits :: EmitStream x, eend :: Event a }
+
+instance Monad (EventStreamM x) where
+  return x = EventStreamM emptyEmits (return x)
+  (EventStreamM s e) >>= f = let fv = fmap f e
+                                 fs = fmap emits fv
+                                 fa = fv >>= eend
+                             in EventStreamM (s `switchEmit` fs) fa
+
+emit :: (Swap (BehaviourEnd x) f, Monad f) =>  x -> (f :. EventStreamM x) ()
+emit x = liftRight $ EventStreamM (singleEmit x) (return ())
+
+instance Wait (EventStreamM x) where 
+  waitEv = EventStreamM emptyEmits
+
+instance (Monad b, Swap Event b) => Swap (EventStreamM x) b where
+  swap (EventStreamM b e) = liftM (EventStreamM b) (plan e)
+
+instance Functor (EventStreamM x) where fmap = liftM
+instance Applicative (EventStreamM x) where pure = return ; (<*>) = ap
+
+runEventStreamM :: EventStreamM x a -> (EventStream x, Event a)
+runEventStreamM (EventStreamM s e) = (tailEmit s, e)
+  
 
 
-newtype EventStreamM x a = EM { emits :: [x] , rest :: Behaviour (Either (Event [x]) a) }
+
+
+           
+
+
+
+
 
 
 
