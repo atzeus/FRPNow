@@ -16,7 +16,7 @@ import Prelude hiding (until)
 main = do screen <- initSDL
           runNow $
               do (evs, quit) <- runEventStreamM <$> open getEvents
-                 printAll (filterJusts (fmap choosem evs))
+                 --printAll (filterJusts (fmap choosem evs))
 
                  bxs <- cur (boxes evs)
                  drawAll screen bxs
@@ -34,7 +34,7 @@ choosem _ = Nothing
 
           
 boxes :: EventStream SDL.Event -> Behaviour (Behaviour [Box])
-boxes evs = do mousePos <- toMousePos evs
+boxes evs = do mousePos <- trace "bla" $ toMousePos evs
                return $ (\x -> [toBox x]) <$> mousePos
     where
   toBox p = Box (normalize $ Rect (100,100) p) red
@@ -142,11 +142,17 @@ getMouse = loop (0,0) where
 
 getEvents ::  (Now :. EventStreamM SDL.Event) ()
 getEvents = loop where
+  loop = waitIO ioGetEvents >>= \l ->
+           if filter (== SDL.Quit) l /= []
+           then return ()
+           else emit (head l) >> loop
+{-
  loop = 
   do l <- waitIO ioGetEvents
      if filter (== SDL.Quit) l /= []
      then return ()
      else (mapM_ emit l) >> loop
+-}
 
 
 printAll :: (Show a, Eq a) => EventStream a -> Now ()

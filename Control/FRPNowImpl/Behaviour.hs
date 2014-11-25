@@ -72,7 +72,6 @@ data BehaviourSyntax a where
  Const    :: a -> BehaviourSyntax a
  Switch   :: MVar (SwitchState a) -> BehaviourSyntax a
  Bnd      :: MVar (Maybe (Behaviour b)) -> Behaviour a -> (a -> Behaviour b) -> BehaviourSyntax b
- SameAs   :: Behaviour a -> BehaviourSyntax a
  WhenJust :: Behaviour (Maybe a) -> BehaviourSyntax (Event a)
  SeqB     :: Behaviour x -> Behaviour a -> BehaviourSyntax a
 

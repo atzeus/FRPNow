@@ -96,15 +96,26 @@ updateEv (Ev e) =
     Primitive ev -> getPrimEv ev >>= return . \case 
                      Just x  -> Ret x
                      Nothing -> s
-    SameAs b     -> updateEv b >>= return . \case 
-                      SameAs b' -> SameAs b'
-                      _         -> s
+    SameAs b     -> updateEv b >>= \case 
+                      SameAs b' -> SameAs <$> getDeepest b'
+                      _         -> return s
     Bind e f     -> evNow e >>= \case 
                      Just x -> do let v = f x
                                   updateEv v
-                                  return (SameAs v)
-                     _    -> return (Bind e f)
+                                  SameAs <$> getDeepest v
+                     _    -> do e' <- getDeepest e; return (Bind e' f)
     _ -> return s
+
+
+getDeepest :: Event a -> Now (Event a)
+getDeepest b@(Ev e) = 
+  do (i,s) <- syncIO $ takeMVar e
+     b' <- case s of
+      SameAs b' -> getDeepest b'
+      _         -> return b
+     syncIO (putMVar e (i,s))
+     return b'
+     
 
 
 -- end shared events

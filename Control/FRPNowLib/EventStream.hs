@@ -7,7 +7,6 @@ module Control.FRPNowLib.EventStream
 import Control.FRPNowImpl.Event
 import Control.FRPNowImpl.Behaviour
 import Control.FRPNowLib.Lib
-import Control.Monad.Free.Reflectable
 import Data.Maybe
 import Control.Monad hiding (when)
 import Control.Applicative
@@ -114,7 +113,7 @@ tailEmit (Emit b) = Es $ do (_,s) <- b
                             getEs s
 
 switchEmit :: EmitStream x -> Event (EmitStream x) -> EmitStream x
-switchEmit (Emit b) es = Emit $ 
+switchEmit (Emit b) es = Emit $ {-# SCC "bla" #-}
    do (l,s) <- b
       getNow es >>= \case 
          Just eb   -> do (r,sr) <- getEmit eb; return (l ++ r,sr)
