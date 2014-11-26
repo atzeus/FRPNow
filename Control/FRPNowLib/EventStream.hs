@@ -1,7 +1,7 @@
 {-# LANGUAGE DeriveFunctor,FlexibleInstances,ConstraintKinds,ViewPatterns,NoMonomorphismRestriction,MultiParamTypeClasses ,FlexibleContexts,TypeOperators, LambdaCase, ScopedTypeVariables, Rank2Types, GADTs, TupleSections,GeneralizedNewtypeDeriving #-}
 
 module Control.FRPNowLib.EventStream
- (EventStream, next, nextSim, emptyEs, merge, switchEs, singleton, fmapB, filterJusts, foldB, fold,  EventStreamM, emit,runEventStreamM)
+ (EventStream(..), next, nextSim, emptyEs, merge, switchEs, singletonEs, fmapB, filterJusts, foldB, fold,  EventStreamM, emit,runEventStreamM)
   where
 
 import Control.FRPNowImpl.Event
@@ -9,9 +9,10 @@ import Control.FRPNowImpl.Behaviour
 import Control.FRPNowLib.Lib
 import Data.Maybe
 import Control.Monad hiding (when)
-import Control.Applicative
+import Control.Applicative hiding (empty)
 import Data.Monoid
 import Control.Monad.Swap
+import Data.Sequence hiding (reverse)
 import Prelude hiding (until)
 import Debug.Trace
 
@@ -48,8 +49,8 @@ switchEs l r = Es $ do r' <- fmap getEs <$> tailEs r
 emptyEs :: EventStream a
 emptyEs = Es $ return never
 
-singleton :: Event a -> EventStream a
-singleton e = Es $ pure (fmap (\x -> [x]) e) `switch` fmap (const (getEs emptyEs)) e
+singletonEs :: Event a -> EventStream a
+singletonEs e = Es $ pure (fmap (\x -> [x]) e) `switch` fmap (const (getEs emptyEs)) e
 
 
 fmapB :: Behaviour (a -> b) -> EventStream a -> EventStream b
@@ -88,45 +89,53 @@ fold :: (a -> b -> a) -> a -> EventStream b -> Behaviour (Behaviour a)
 fold f i = foldB f' (pure i)
   where f' b x = (\b -> f b x) <$> b
 
-newtype EmitStream x = Emit { getEmit :: Behaviour ([x], EventStream x) }
+-- See reflection without remorse for which performance problem this construction solves...
 
-emptyEmits = Emit (return ([], emptyEs ))
+type Evs     x = Seq (EvsView x)
+type EvsView x = Event (EH x)
+data EH x = x :| Evs x | End
 
-singleEmit x = Emit (return ([x],emptyEs))
 
-toEventStream :: Event (EmitStream x) -> EventStream x
-toEventStream em = Es $ 
-    do e <- plan (fmap (firstEv . getEmit)  em)
-       let ea = join (fmap fst e)
-       let es = fmap snd e
-       pure ea `switch` es where
-                           
-   firstEv :: Behaviour ([x], EventStream x) -> Behaviour (Event [x], Behaviour (Event [x]))
-   firstEv b = do (l,s) <- b
-                  e <- case l of
-                     [] -> getEs s 
-                     l  -> return (return l)
-                  return (e,getEs s)
+toView :: Evs x -> EvsView x
+toView e = case viewl e of
+     EmptyL -> return End
+     h :< t -> h >>= nxt t
+  where nxt t End = toView t
+        nxt r (h :| l) = return (h :| (l >< r))
 
-tailEmit :: EmitStream x -> EventStream x
-tailEmit (Emit b) = Es $ do (_,s) <- b
-                            getEs s
+append :: Evs x -> Evs x -> Evs x
+append = (><)
 
-switchEmit :: EmitStream x -> Event (EmitStream x) -> EmitStream x
-switchEmit (Emit b) es = Emit $ {-# SCC "bla" #-}
-   do (l,s) <- b
-      getNow es >>= \case 
-         Just eb   -> do (r,sr) <- getEmit eb; return (l ++ r,sr)
-         Nothing   -> return (l, s `switchEs` toEventStream es)
+app :: Evs x -> Event (Evs x) -> Evs x
+app l r = append l (singleton $ join $ fmap toView r) -- it's magic!
 
-data EventStreamM x a = EventStreamM { emits :: EmitStream x, eend :: Event a }
+emptyEmits = empty
+singleEmit x = singleton (return (x :| emptyEmits))
+
+toEventStream :: Evs x -> EventStream x
+toEventStream = Es . loop where
+  loop e = do e' <- lose e
+              eh <- join <$> plan (nxt [] <$> toView e')
+              pure eh `switch` (loop e' <$ eh)
+  lose e = getNow (toView e) >>= \case 
+            Just End      -> return emptyEmits
+            Just (h :| t) -> lose t
+            Nothing       -> return e
+  nxt :: [x] -> EH x -> Behaviour (Event ([x]))
+  nxt [] End     = return never
+  nxt l  End     = return (return (reverse l))
+  nxt l (h :| t) = getNow (toView t) >>= \case 
+                    Just x -> nxt (h : l) x
+                    Nothing -> return (return (reverse (h: l)))
+
+data EventStreamM x a = EventStreamM { emits :: Evs x, eend :: Event a }
 
 instance Monad (EventStreamM x) where
   return x = EventStreamM emptyEmits (return x)
   (EventStreamM s e) >>= f = let fv = fmap f e
-                                 fs = fmap emits fv
+                                 fs = emits <$> fv
                                  fa = fv >>= eend
-                             in EventStreamM (s `switchEmit` fs) fa
+                             in EventStreamM (app s fs) fa
 
 emit :: (Swap (BehaviourEnd x) f, Monad f) =>  x -> (f :. EventStreamM x) ()
 emit x = liftRight $ EventStreamM (singleEmit x) (return ())
@@ -141,7 +150,7 @@ instance Functor (EventStreamM x) where fmap = liftM
 instance Applicative (EventStreamM x) where pure = return ; (<*>) = ap
 
 runEventStreamM :: EventStreamM x a -> (EventStream x, Event a)
-runEventStreamM (EventStreamM s e) = (tailEmit s, e)
+runEventStreamM (EventStreamM s e) = (toEventStream s, e)
   
 
 

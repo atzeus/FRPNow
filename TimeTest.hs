@@ -21,10 +21,10 @@ test2 =
 testb = 
   do b <- count1 500000
      e <- count1 10000
-     v <- cur $ whenJust ( (\x -> if x > 20 then Just 1 else Nothing) <$> b)
+     v <- cur $ whenJust ( (\x -> if x > 10 then Just 1 else Nothing) <$> b)
      let b' = b `switch` (fmap return v)
      let f = (,) <$> b' <*> e
-     m <- cur $ whenJust ( (\x -> if x == (1,2000) then Just (0,0) else Nothing) <$> f)
+     m <- cur $ whenJust ( (\x -> if x == (1,1000) then Just (0,0) else Nothing) <$> f)
      showChanges (f `switch` (fmap pure m))
      return never
 
