@@ -70,6 +70,13 @@ when b = whenJust $ choose <$> b where
 change :: Eq a => Behaviour a -> Behaviour (Event ())
 change b = do v <- b ; when $ (/= v) <$> b
 
+becomesTrue :: Behaviour Bool -> Behaviour (Event ())
+becomesTrue b = do v <- b
+                   if v
+                   then do e <- when (not <$> b)
+                           join <$> plan (when b <$ e)
+                   else when b
+
 (<@>) :: Behaviour (a -> b) -> Event a -> Behaviour (Event b)
 b <@> e = plan $ fmap (\x -> b <*> pure x) e
 
@@ -108,3 +115,14 @@ instance Applicative (BehaviourEnd x) where pure = return ; (<*>) = ap
 
 
 
+            
+            
+            
+showChanges :: (Eq a, Show a) => Behaviour a -> Now ()
+showChanges b = loop where
+ loop = do v <- cur b
+           syncIO $ putStrLn (show v)
+           e <- cur $ whenJust (toJust v <$> b)
+           e' <- planIO (fmap (const (loop)) e)
+           return ()
+  where  toJust v x = if v == x then Nothing else Just x

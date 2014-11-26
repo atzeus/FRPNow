@@ -16,27 +16,22 @@ import Prelude hiding (until)
 main = do screen <- initSDL
           runNow $
               do (evs,quit) <- runEventStreamM <$> open getEvents
-                 printAll (filterJusts (fmap choosem evs))
+                 bs         <- curIO $ toMouseButtonsDown evs
+                 showChanges bs
 
                  bxs <- cur (boxes evs)
                  drawAll screen bxs
 
                  return quit
 
-choosemm l = let x = catMaybes ( map choosem l)
-             in case x of
-                 [] -> Nothing
-                 x -> Just x 
-                
-
-choosem (SDL.MouseButtonDown _ _ m) = Just m
-choosem _ = Nothing
-
           
 boxes :: EventStream SDL.Event -> Behaviour (Behaviour [Box])
-boxes evs = do mousePos <- trace "bla" $ toMousePos evs
-               return $ (\x -> [toBox x]) <$> mousePos
+boxes evs = do mousePos <- toMousePos evs
+               buttons  <- toMouseButtonsDown evs
     where
+  box :: (Behaviour :. BehaviourEnd [Box]) ()
+  box = do toBox <$> mousePos `until` release MLeft bs
+           
   toBox p = Box (normalize $ Rect (100,100) p) red
 
 {-
@@ -108,12 +103,14 @@ box mouse mouseDown p = runUntilM $
                 r' <- liftB $ movingRect
                 loop r'
               
-isDown :: MouseBtn -> Behaviour s (Set MouseBtn) -> Behaviour s Bool
-isDown m b = member m <$> b
-click m b = becomesTrue $ isDown m b
-release m b = becomesTrue $ not <$> isDown m b
+
   
 -}
+isDown :: MouseBtn -> Behaviour (Set MouseBtn) -> Behaviour Bool
+isDown m b = member m <$> b
+click m b   = becomesTrue $ isDown m b
+release m b = becomesTrue $ not <$> isDown m b
+
 toMouseButtonsDown :: EventStream SDL.Event -> Behaviour (Behaviour (Set MouseBtn))
 toMouseButtonsDown = fold updateSet empty where
   updateSet s (SDL.MouseButtonDown _ _ m) | Just m' <- toM m = insert m' s
@@ -131,22 +128,8 @@ toMousePos = fold getMousePos (0.0,0.0)
 getMousePos p (SDL.MouseMotion x y _ _) = (fromIntegral x, fromIntegral y)
 getMousePos p _                         = p
 
-getMouse ::  Now (Behaviour Point)
-getMouse = loop (0,0) where
-  loop :: Point -> Now (Behaviour Point)
-  loop p =  do e <- async ioGetEvents
-               let e' = foldl getMousePos p <$> e
-               e'' <- plan (fmap loop e')
-               return (pure p `switch` e'')
-
-
 getEvents ::  (Now :. EventStreamM SDL.Event) ()
 getEvents = loop where
-{-
-  loop = do e <- asyncIO ioGetEvents 
-            s <- planIO (loop <$ e) 
-            return (pure e `switch` s)
--}
  loop = 
   do l <- waitIO ioGetEvents
      if filter (== SDL.Quit) l /= []
@@ -155,26 +138,7 @@ getEvents = loop where
 
 
 
-printAll :: (Show a, Eq a) => EventStream a -> Now ()
-printAll evs = do e2 <- cur (nextSim evs)
-                  plan (fmap loop e2)
-                  return () where
-  loop l = 
-      do async (putStrLn (show l)) >> return ()
-         e2 <- cur (nextSim evs)
-         plan (fmap loop e2)
-         return () 
-            
-            
-            
-showChanges :: (Eq a, Show a) => Behaviour a -> Now ()
-showChanges b = loop where
- loop = do v <- cur b
-           syncIO $ putStrLn (show v)
-           e <- cur $ whenJust (toJust v <$> b)
-           e' <- planIO (fmap (const (loop)) e)
-           return ()
-  where  toJust v x = if v == x then Nothing else Just x
+
 
 drawAll :: SDL.Surface -> Behaviour [Box] -> Now ()
 drawAll screen b = loop where

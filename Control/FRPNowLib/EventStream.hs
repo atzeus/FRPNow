@@ -1,7 +1,7 @@
 {-# LANGUAGE DeriveFunctor,FlexibleInstances,ConstraintKinds,ViewPatterns,NoMonomorphismRestriction,MultiParamTypeClasses ,FlexibleContexts,TypeOperators, LambdaCase, ScopedTypeVariables, Rank2Types, GADTs, TupleSections,GeneralizedNewtypeDeriving #-}
 
 module Control.FRPNowLib.EventStream
- (EventStream(..), next, nextSim, emptyEs, merge, switchEs, singletonEs, fmapB, filterJusts, foldB, fold,  EventStreamM, emit,runEventStreamM)
+ (EventStream, next, nextSim, emptyEs, merge, switchEs, singletonEs, fmapB, filterJusts, foldB, fold,  EventStreamM, emit,runEventStreamM)
   where
 
 import Control.FRPNowImpl.Event
@@ -156,7 +156,15 @@ runEventStreamM (EventStreamM s e) = (toEventStream s, e)
 
 
 
-           
+printAll :: (Show a, Eq a) => EventStream a -> Now ()
+printAll evs = do e2 <- cur (nextSim evs)
+                  plan (fmap loop e2)
+                  return () where
+  loop l = 
+      do async (putStrLn (show l)) >> return ()
+         e2 <- cur (nextSim evs)
+         plan (fmap loop e2)
+         return ()            
 
 
 
