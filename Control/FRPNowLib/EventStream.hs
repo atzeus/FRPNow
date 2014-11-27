@@ -1,7 +1,7 @@
 {-# LANGUAGE DeriveFunctor,FlexibleInstances,ConstraintKinds,ViewPatterns,NoMonomorphismRestriction,MultiParamTypeClasses ,FlexibleContexts,TypeOperators, LambdaCase, ScopedTypeVariables, Rank2Types, GADTs, TupleSections,GeneralizedNewtypeDeriving #-}
 
 module Control.FRPNowLib.EventStream
- (EventStream, next, nextSim, emptyEs, repeatEv, merge, switchEs, singletonEs, fmapB, filterJusts, foldB, fold, during, sampleOn, parList,  EventStreamM, emit,runEventStreamM)
+(EventStream, next, nextSim, emptyEs, repeatEv, merge, switchEs, singletonEs, fmapB, filterJusts, foldB, fold, during, sampleOn, parList, scanlEv, foldr1Ev, foldrEv, foldrSwitch, EventStreamM, emit,runEventStreamM)
   where
 
 import Control.FRPNowImpl.Event
@@ -12,7 +12,7 @@ import Control.Monad hiding (when)
 import Control.Applicative hiding (empty)
 import Data.Monoid
 import Control.Monad.Swap
-import Data.Sequence hiding (reverse)
+import Data.Sequence hiding (reverse,scanl)
 import Prelude hiding (until)
 import Debug.Trace
 
@@ -94,21 +94,40 @@ e `during` b = filterB (const <$> b) e
 sampleOn :: Behaviour a -> EventStream x -> EventStream a
 sampleOn b = fmapB (const <$> b) 
 
-foldB :: (Behaviour a -> b -> Behaviour a) -> 
-        Behaviour a -> EventStream b -> Behaviour (Behaviour a)
-foldB f i es = loop i where
+
+scanlEv :: (a -> b -> a) -> a -> EventStream b -> Behaviour (EventStream a)
+scanlEv f i es = Es <$> loop i where
  loop i = 
   do e  <- getEs es
      ev <- plan (fmap (nxt i) e)
-     return (i `switch` ev)
+     let i' = scanl f i <$> e
+     return (pure i' `switch` ev)
  nxt i l = loop (foldl f i l)
 
+foldr1Ev :: (a -> Event b -> b) -> EventStream a -> Behaviour (Event b)
+foldr1Ev f es = loop where
+ loop = 
+  do e  <- getEs es
+     ev <- plan (nxt <$> e)
+     pure ev
+ nxt [h]     = f h          <$> loop
+ nxt (h : t) = f h . return <$> nxt t
+
+foldrEv :: a -> (a -> Event b -> b) -> EventStream a -> Behaviour b
+foldrEv i f es = f i <$> foldr1Ev f es
+
+foldrSwitch :: Behaviour a -> EventStream (Behaviour a) -> Behaviour (Behaviour a)
+foldrSwitch b = foldrEv b switch
+
+foldB :: Behaviour a -> (Behaviour a -> b -> Behaviour a) -> EventStream b -> Behaviour (Behaviour a)
+foldB b f es = scanlEv f b es >>= foldrSwitch b
+
 fold :: (a -> b -> a) -> a -> EventStream b -> Behaviour (Behaviour a)
-fold f i = foldB f' (pure i)
+fold f i = foldB (pure i) f' 
   where f' b x = (\b -> f b x) <$> b
 
 parList :: EventStream (BehaviourEnd b ()) -> Behaviour (Behaviour [b])
-parList = foldB (flip (.:)) (pure [])
+parList = foldB (pure []) (flip (.:)) 
 
 
 -- See reflection without remorse for which performance problem this construction solves...

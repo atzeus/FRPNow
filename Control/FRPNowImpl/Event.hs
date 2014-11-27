@@ -75,7 +75,7 @@ primEv  = newEvent . Prim
 rewriteEv :: Event a -> Now (EventSyntax a)
 rewriteEv (Ev e) = 
   do (i, s) <- syncIO $ takeMVar e
-     j      <- Time <$> getRound
+     j      <- getRound
      s' <- if i == j then return s else rewriteEvSyntax s
      syncIO $ putMVar e (j,s')
      return s'
@@ -114,8 +114,8 @@ getPrimEv (External r) = Now $ readMVar r >>= \case
 getPrimEv (Internal r) = Now $ readMVar r
 getPrimEv Never        = return Nothing
 
-getRound :: Now Integer
-getRound = Now $ readMVar globalCurRound
+getRound :: Now Time
+getRound = Now $ Time <$> readMVar globalCurRound
 
 data WatchEv a = WatchFirst [Event a]
 

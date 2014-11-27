@@ -22,6 +22,8 @@ main = do screen <- initSDL
                  drawAll screen bxs
                  return quit
 
+
+
           
 boxes :: Behaviour Point -> Behaviour (Set MouseBtn) -> Behaviour (Behaviour [Box])
 boxes mousePos buttons = parList $ box `sampleOn` clicks MLeft 
