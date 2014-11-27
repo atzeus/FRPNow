@@ -16,100 +16,36 @@ import Prelude hiding (until)
 main = do screen <- initSDL
           runNow $
               do (evs,quit) <- runEventStreamM <$> open getEvents
-                 bs         <- curIO $ toMouseButtonsDown evs
-                 showChanges bs
-
-                 bxs <- cur (boxes evs)
+                 mousePos <- cur $ toMousePos evs
+                 buttons  <- cur $ toMouseButtonsDown evs
+                 bxs <- cur (boxes mousePos buttons)
                  drawAll screen bxs
-
                  return quit
 
           
-boxes :: EventStream SDL.Event -> Behaviour (Behaviour [Box])
-boxes evs = do mousePos <- toMousePos evs
-               buttons  <- toMouseButtonsDown evs
-    where
-  box :: (Behaviour :. BehaviourEnd [Box]) ()
-  box = do toBox <$> mousePos `until` release MLeft bs
-           
-  toBox p = Box (normalize $ Rect (100,100) p) red
+boxes :: Behaviour Point -> Behaviour (Set MouseBtn) -> Behaviour (Behaviour [Box])
+boxes mousePos buttons = parList $ box `sampleOn` clicks MLeft 
+  where
+  box :: Behaviour (BehaviourEnd Box ())
+  box = open $
+     do p1 <- cur mousePos
+        let defineRect = rect p1 <$> mousePos
+        let defineBox = Box <$> defineRect <*> pure red
+        defineBox `until` release MLeft
+        p2 <- cur mousePos
+        let r = rect p1 p2
+        let mouseOver = (`isInside` r) <$> mousePos
+        let toColor True  = green
+            toColor False = red 
+        let color = toColor <$> mouseOver
+        (Box r <$> color)  `until` next (clicks MRight `during` mouseOver)
 
-{-
-          runNow (mainFRP screen)
-          putStrLn "Thank you for using SuperawesomeDraw 0.1!"
-          return ()
+  clicks :: MouseBtn -> EventStream ()
+  clicks m  = repeatEv $ click m 
+  click m   = becomesTrue $ isDown m
+  release m = becomesTrue $ not <$> isDown m
+  isDown m  = (m `member`) <$> buttons
 
-mainFRP :: SDL.Surface -> Now s (Event s ()) 
-mainFRP screen = 
-          do (evs, end) <- runEventStreamM getEvents
-             mousePos <- liftB  $ toMousePos evs
-             mButsDown <- liftB $ toMouseButtonsDown evs
-             b <- liftB $ boxes mousePos mButsDown evs
-             runEventM $ drawAll screen b
-             return end
-
-boxes :: Behaviour s Point -> Behaviour s (Set MouseBtn) -> EventStream s SDL.Event -> Behaviour s (Behaviour s [Box])
-boxes mousePos mButsDown evs = 
-   do let es = filterES isLeftClick evs
-      let es' = mapES (\(SDL.MouseButtonDown x y _) -> (fromIntegral x, fromIntegral y)) es
-      let es2 = mapES (box mousePos mButsDown) es'
-      parList es2
- where isLeftClick (SDL.MouseButtonDown _ _ SDL.ButtonRight) = True
-       isLeftClick _ = False
-
-box :: forall s. Behaviour s Point -> Behaviour s (Set MouseBtn) -> Point -> Behaviour s (BehaviourEnd s Box ())
-box mouse mouseDown p = runUntilM $
-  do  Box r _ <- defineBox `untilbl` release MRight mouseDown
-
-      (mouseOver , dragRect) <- liftB $ 
-        mdo let mo = mouseOver dr  -- mutually dependent!
-            shouldMove <- dragging mo
-            dr <- dragRect shouldMove r
-            return (mo,dr)
-      
-      let color   = toColor <$> mouseOver
-      let dragBox = Box <$> dragRect <*> color
-      dragBox `untilbl` clickWhile mouseOver
-      return () 
- where
-  toColor True = red
-  toColor False = green
-
-  defineBox = Box <$> rectMouse <*> pure red 
-  rectMouse = normalize <$> Rect p <$> mouse
-
-  clickWhile mouseOver = 
-     do clicks <- repeatEv $ click MMiddle mouseDown
-        nextES $ filterES id $ mouseOver `on` clicks
-        
-  dragging mouseOver = runUntilMl $ forever $ 
-       do pure False `untilb` click MLeft mouseDown
-          r <- liftB $ mouseOver
-          if r
-          then pure True `untilB` (not <$> isDown MLeft mouseDown)
-          else return ()
-
-  mouseOver rect = isInside <$> mouse <*> rect
-
-  localMouse = do startPos <- liftB $ mouse
-                  return $ (.- startPos) <$> mouse
-
-  dragRect shouldMove r = runUntilMl $ loop r where
-    loop :: Rect -> UntilM Behaviour Rect s ()
-    loop r = do pure r `untilB` shouldMove
-                move <- liftB $ localMouse
-                let movingRect = moveRect r <$> move
-                movingRect `untilB` (not <$> shouldMove)
-                r' <- liftB $ movingRect
-                loop r'
-              
-
-  
--}
-isDown :: MouseBtn -> Behaviour (Set MouseBtn) -> Behaviour Bool
-isDown m b = member m <$> b
-click m b   = becomesTrue $ isDown m b
-release m b = becomesTrue $ not <$> isDown m b
 
 toMouseButtonsDown :: EventStream SDL.Event -> Behaviour (Behaviour (Set MouseBtn))
 toMouseButtonsDown = fold updateSet empty where
@@ -212,6 +148,8 @@ moveRect (Rect lu rd) p = Rect (lu .+ p) (rd .+ p)
 
 isInside :: Point -> Rect -> Bool
 isInside (x,y) (normalize -> Rect (l,u) (r,d)) = x >= l && x <= r && y >= u && y <= d
+
+rect p1 p2 = normalize (Rect p1 p2)
 
 toRect :: Rect -> SDL.Rect
 toRect (normalize -> Rect (lx,uy) (rx,dy)) = SDL.Rect (round lx) (round uy) (round (rx - lx)) (round (dy - uy))

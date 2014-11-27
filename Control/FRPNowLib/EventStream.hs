@@ -1,7 +1,7 @@
 {-# LANGUAGE DeriveFunctor,FlexibleInstances,ConstraintKinds,ViewPatterns,NoMonomorphismRestriction,MultiParamTypeClasses ,FlexibleContexts,TypeOperators, LambdaCase, ScopedTypeVariables, Rank2Types, GADTs, TupleSections,GeneralizedNewtypeDeriving #-}
 
 module Control.FRPNowLib.EventStream
- (EventStream, next, nextSim, emptyEs, merge, switchEs, singletonEs, fmapB, filterJusts, foldB, fold,  EventStreamM, emit,runEventStreamM)
+ (EventStream, next, nextSim, emptyEs, repeatEv, merge, switchEs, singletonEs, fmapB, filterJusts, foldB, fold, during, sampleOn, parList,  EventStreamM, emit,runEventStreamM)
   where
 
 import Control.FRPNowImpl.Event
@@ -25,6 +25,11 @@ next e = fmap head <$> getEs e
 nextSim :: EventStream a -> Behaviour (Event [a]) 
 nextSim e = getEs e
 
+repeatEv :: Behaviour (Event a) -> EventStream a
+repeatEv b = Es $ loop where
+   loop = do e <- b
+             let e' = (\x -> [x]) <$> e
+             pure e' `switch` (loop <$ e)
 
 -- in case of simultaneity, the left elements come first
 merge :: EventStream a -> EventStream a -> EventStream a
@@ -76,6 +81,19 @@ filterJusts es = loop where
             [] -> getEs loop
             l  -> return (return l)
 
+filterMapB :: Behaviour (a -> Maybe b) -> EventStream a -> EventStream b
+filterMapB f e = filterJusts $ fmapB f e
+
+filterB :: Behaviour (a -> Bool) -> EventStream a -> EventStream a
+filterB f = filterMapB (toMaybe <$> f) 
+  where toMaybe f = \a ->  if f a then Just a else Nothing
+
+during :: EventStream a -> Behaviour Bool -> EventStream a
+e `during` b = filterB (const <$> b) e
+
+sampleOn :: Behaviour a -> EventStream x -> EventStream a
+sampleOn b = fmapB (const <$> b) 
+
 foldB :: (Behaviour a -> b -> Behaviour a) -> 
         Behaviour a -> EventStream b -> Behaviour (Behaviour a)
 foldB f i es = loop i where
@@ -88,6 +106,10 @@ foldB f i es = loop i where
 fold :: (a -> b -> a) -> a -> EventStream b -> Behaviour (Behaviour a)
 fold f i = foldB f' (pure i)
   where f' b x = (\b -> f b x) <$> b
+
+parList :: EventStream (BehaviourEnd b ()) -> Behaviour (Behaviour [b])
+parList = foldB (flip (.:)) (pure [])
+
 
 -- See reflection without remorse for which performance problem this construction solves...
 

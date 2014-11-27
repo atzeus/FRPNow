@@ -114,7 +114,6 @@ instance Functor (BehaviourEnd x) where fmap = liftM
 instance Applicative (BehaviourEnd x) where pure = return ; (<*>) = ap
 
 
-
             
             
             
