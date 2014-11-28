@@ -1,9 +1,10 @@
 {-# LANGUAGE TupleSections,LambdaCase,ExistentialQuantification,GADTs,GeneralizedNewtypeDeriving #-}
-module Control.FRPNowImpl.Event((>$<),Event,never,evNow,Now,runNow,syncIO,asyncIO,first,planIO, planFirst, Time(..),getRound,checkAll) where
+module Control.FRPNowImpl.Event((>$<),Event,never,evNow,Now,runNow,syncIO,asyncIO,first,planIO, planFirst,firstOb,raceObs, Time(..),getRound,beforeNow,checkAll) where
 
 import Control.Applicative
 import Control.Concurrent
 import Control.Concurrent.MVar
+import Control.Monad.Fix
 import Data.IORef 
 import Control.Monad
 import System.IO.Unsafe
@@ -12,7 +13,9 @@ import Debug.Trace
 
 infixr 4 >$<
 
+(>$<) :: Functor f => f a -> (a -> b) -> f b
 (>$<) = flip (<$>)
+
 data Time = MinBound | Time Integer | MaxBound deriving (Show,Ord,Eq)
 
 instance Bounded Time where
@@ -22,7 +25,8 @@ instance Bounded Time where
 
 
 
-
+beforeNow :: Now a -> Now a
+beforeNow = undefined
 
 evNow :: Event a -> Now (Maybe (Time, a))
 evNow e = rewriteEv e >>= \case
@@ -101,7 +105,7 @@ data PrimEv a = External (MVar (Maybe (Time, a)))
               | Internal (MVar (Maybe (Time,a)))
               | Never
 
-newtype Now a = Now { runNow' :: IO a } deriving (Functor, Applicative, Monad)
+newtype Now a = Now { runNow' :: IO a } deriving (Functor, Applicative, Monad,MonadFix)
 
 getPrimEv :: PrimEv a -> Now (Maybe (Time,a))
 getPrimEv (External r) = Now $ readMVar r >>= \case 
@@ -148,6 +152,12 @@ asyncIO m = syncIO $
 
 syncIO :: IO a -> Now a
 syncIO m = Now m
+
+firstOb :: Event a -> Event a -> Now (Event a)
+firstOb = undefined
+
+raceObs :: Event a -> Event b -> Now (Event (Either a b))
+raceObs = undefined
 
 first :: [Event a] -> Now (Event a)
 first e = planFirst (map (fmap pure) e)

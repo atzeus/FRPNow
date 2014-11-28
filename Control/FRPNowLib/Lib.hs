@@ -110,6 +110,9 @@ until :: (Cur f, Swap (BehaviourEnd x) f) =>
 until b e = do ev <- cur e 
                liftRight (BehaviourEnd b ev)
 
+untilb b e = until b e >> cur b
+                  
+
 instance Functor (BehaviourEnd x) where fmap = liftM
 instance Applicative (BehaviourEnd x) where pure = return ; (<*>) = ap
 

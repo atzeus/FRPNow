@@ -1,12 +1,13 @@
 {-# LANGUAGE TupleSections,LambdaCase,ExistentialQuantification,GADTs,GeneralizedNewtypeDeriving #-}
 
-module Control.FRPNowImpl.Behaviour(Behaviour,switch, whenJust,seqB,curIO) where
+module Control.FRPNowImpl.Behaviour(Behaviour,switch,beforeSwitch, whenJust,seqB,curIO) where
 
 import Data.Sequence
 import Control.Applicative hiding (empty,Const)
 import Control.FRPNowImpl.Event
 import Data.Foldable
 import Control.Monad
+import Control.Monad.Fix
 import System.IO.Unsafe
 import Control.Concurrent.MVar
 import Debug.Trace
@@ -63,7 +64,7 @@ getShape (B m) =
 getBehaviour :: Behaviour a -> Now (BehaviourSyntax a,BehaviourNF a)
 getBehaviour (B m) = 
  do (i, s, mnf) <- syncIO $ takeMVar m
-    j  <- getRound
+    j  <- trace "get" $ getRound
     (s',nf) <- maybeUpdate i s mnf j
     let nf' = if lastChange nf /= j
               then nf {prev = val nf, same = True }
@@ -103,6 +104,8 @@ getNF mnf self e = case e of
 
   BeforeSwitch b -> do nfb <- updateGetNF b
                        return nfb {val = prev nfb, same = True}
+
+  MFix f -> mfix (\nfb -> trace "Jada" $ updateGetNF (f (val nfb)))
 
   -- we rewrote just before this, means just switched.
   Switched i b v -> do nfb <- updateGetNF b
@@ -171,6 +174,7 @@ rewriteBehaviour = \case
 
 data BehaviourSyntax a where
  Const      :: a -> BehaviourSyntax a
+ MFix       :: (a -> Behaviour a) -> BehaviourSyntax a
  Delay      :: Time -> Behaviour a -> BehaviourSyntax a
  Switch     :: Behaviour a -> Event (Behaviour a) -> BehaviourSyntax a
  Switched   :: Time -> Behaviour a -> Behaviour a -> BehaviourSyntax a
@@ -189,6 +193,9 @@ instance Monad Behaviour where
   return x = newBehaviour (Const x)
   m >>= f = newBehaviour (Bnd m (unsafePerformIO $ newMVar Nothing) f)
   {-# NOINLINE (>>=) #-}
+
+instance MonadFix Behaviour where
+  mfix f = newBehaviour (MFix f)
 
 
 beforeSwitch b = newBehaviour (BeforeSwitch b)

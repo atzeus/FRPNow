@@ -35,12 +35,29 @@ boxes mousePos buttons = parList $ box `sampleOn` clicks MLeft
         let defineBox = Box <$> defineRect <*> pure red
         defineBox `until` release MLeft
         p2 <- cur mousePos
-        let r = rect p1 p2
-        let mouseOver = (`isInside` r) <$> mousePos
+        (r, mouseOver) <- cur $ dragRectMouseOver (rect p1 p2)
         let toColor True  = green
             toColor False = red 
         let color = toColor <$> mouseOver
-        (Box r <$> color)  `until` next (clicks MRight `during` mouseOver)
+        (Box  <$> r <*> color)  `until` next (clicks MRight `during` mouseOver)
+
+
+  dragRectMouseOver :: Rect -> Behaviour (Behaviour Rect, Behaviour Bool)
+  dragRectMouseOver r = -- notice fixpoint and delay
+        mdo let mouseOver = isInside <$> mousePos <*> dr
+            dr <- dragrect r (beforeSwitch mouseOver)
+            return (dr,mouseOver)
+                  
+
+  dragrect :: Rect -> Behaviour Bool -> Behaviour (Behaviour Rect)  
+  dragrect r mouseOver =  behaviour <$> open (loop r) where
+    loop r = do pure r `until` when mouseOver
+                p <- cur mousePos
+                let offset = mousePos >$< (.- p)
+                let mr = moveRect r <$> offset
+                mr `until` when (not <$> mouseOver)
+                cur mr >>= loop
+                        
 
   clicks :: MouseBtn -> EventStream ()
   clicks m  = repeatEv $ click m 

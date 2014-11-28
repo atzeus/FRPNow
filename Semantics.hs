@@ -12,7 +12,7 @@ inf = 1/0
 type Behaviour a = Time -> a
 data Event a = a :@ Time
 
-never = undefined :@ inf
+
 
 instance Monad Event where -- writer monad
   return a = a :@ (-inf)
@@ -30,6 +30,9 @@ whenJust f t = let t' = undefined -- min { t' >= t | isJust (f t') }
 
 seqB :: Behaviour x -> Behaviour a -> Behaviour a
 seqB s b t = s t `seq` b t
+
+beforeSwitch :: Behaviour a -> Behaviour a
+beforeSwitch f = f . before
 
 
 
