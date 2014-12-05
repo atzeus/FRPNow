@@ -1,10 +1,11 @@
+{-# LANGUAGE TypeOperators, ViewPatterns, RecursiveDo, ScopedTypeVariables #-}
 
 
 import Control.FRPNow
 
 import Control.Concurrent
 import Control.Applicative
-import Control.Monad
+import Control.Monad hiding (when)
 import Control.Concurrent.MVar 
 import System.IO
 main = do runNow (testb )
@@ -20,23 +21,28 @@ test2 =
 -}
 testb = 
   do b <- count1 500000
-     e <- count1 10000
-     v <- cur $ whenJust ( (\x -> if x > 10 then Just 1 else Nothing) <$> b)
-     let b' = b `switch` (fmap return v)
-     let f = (,) <$> b' <*> e
-     m <- cur $ whenJust ( (\x -> if x == (1,1000) then Just (0,0) else Nothing) <$> f)
-     showChanges (f `switch` (fmap pure m))
+     e <- cur $ when ((== 5) <$> b)
+     --e <- count1 500000
+     --v <- cur $ whenJust ( (\x -> if x > 3000 then Just 1 else Nothing) <$> b)
+     --let b' = b `switch` (fmap return v)
+     --let f = (,) <$> b' <*> e
+     --m <- cur $ whenJust ( (\x -> if x == (1,10000) then Just (0,0) else Nothing) <$> f)
+--     showChanges (f `switch` (fmap pure m))
+--     showChanges b
+--     bc <- cur $ bla e
+     showChanges (bla e)
      return never
 
-showChanges :: (Eq a, Show a) => Behaviour a -> Now ()
-showChanges b = loop where
- loop = do v <- cur b
-           syncIO $ putStrLn (show v)
-           e <- cur $ whenJust (toJust v <$> b)
-           e' <- planIO (fmap (const (loop)) e)
-           return ()
-  where  toJust v x = if v == x then Nothing else Just x
 
+bla :: Event () -> Behaviour Int
+bla e1 = mdo e2 <- cur $ when $ (== 1) <$> b
+             let  b = (pure 1) `switch` (pure 2 <$ e2)
+             b
+{-
+bla e1 = let e = when $ (== 1) <$> b
+             b = e >>= \e2 ->  pure 0  `switch` (pure 2 <$ e2)
+         in b
+-}
 sampleEvery :: (Eq a, Show a) => Int -> Behaviour a -> Now ()
 sampleEvery delay b = loop where
  loop = do v <- cur b

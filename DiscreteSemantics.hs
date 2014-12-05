@@ -7,13 +7,6 @@ import Control.FRPNow hiding (Behaviour, switch,whenJust, seqS, beforeSwitch, de
 
 infixr 3 :-> 
 
-first :: Event a -> Event b -> Event (Either a b)
-first = undefined
-
-
-delay :: Event a -> Event a
-delay = undefined
-
 
 data Behaviour a = (:->) { headB :: a, tailB ::  Event (Behaviour a) }
 
@@ -22,7 +15,7 @@ instance Monad Behaviour where
   (h :-> t) >>= f = f h `switch` fmap (>>= f) t
 
 instance MonadFix Behaviour where
-  mfix f = fix (head . beforeSwitch . f)
+  mfix f = fix (f . headB)
 
 switch :: Behaviour a -> Event (Behaviour a) -> Behaviour a
 switch (h :-> t) e = h :-> (either (`switch` e) id) <$> (first t e) 
@@ -36,8 +29,5 @@ whenJust (h :-> t) =
 
 seqS :: Behaviour x -> Behaviour a -> Behaviour a
 seqS  s@(sh :-> st) b@(h :-> t) = 
-  (sh `seq` h) :-> (either (`seqS` b) (s `seqS`)) <$> (first st t) 
-
-beforeSwitch :: Behaviour a -> Behaviour a
-beforeSwitch (h :-> t) = h :-> delay ($> t)
+  (sh `seq` h) :-> ((s `seqS`) <$> t) 
 

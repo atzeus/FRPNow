@@ -3,22 +3,22 @@ import Control.Applicative
 import Control.Monad
 import Control.Monad.Fix
 import Control.Concurrent.MVar
+import System.IO.Unsafe
 import Control.FRPNow hiding (Behaviour, switch,whenJust, seqS, beforeSwitch, delay, getNow,cur)
 
 infixr 3 :-> 
 data BHT a = (:->) { headB :: a , tailB :: Event (Behaviour a) }
-           | Jump { cur :: Now a, prev :: Now a, tailB :: Event (Behaviour a) }
 
 newtype Behaviour a = Behaviour { getNow :: Now (BHT a) }
 
 instance Monad Behaviour where
   return a = Behaviour (return (a :-> never))
-  m >>= f = Behaviour $
+  m >>= f = memoB $
    do h :-> t <- getNow m
       getNow (f h `switch` fmap (>>= f) t)
 
 instance MonadFix Behaviour where
-  mfix f = Behaviour $ mfix (getNow . f . headB)
+  mfix f = memoB $ mfix (getNow . f . headB)
 
 switch ::  Behaviour a -> Event (Behaviour a) -> Behaviour a
 switch b e = Behaviour $ 
@@ -31,7 +31,7 @@ switch b e = Behaviour $
 
 
 whenJust :: forall a. Behaviour (Maybe a) -> Behaviour (Event a)
-whenJust b = Behaviour $ 
+whenJust b = memoB $ 
   do h :-> t <- getNow b
      let tw = fmap whenJust t
      case h of
@@ -41,15 +41,11 @@ whenJust b = Behaviour $
 
 
 seqS :: Behaviour x -> Behaviour a -> Behaviour a
-seqS l r = Behaviour $ 
+seqS l r = memoB $ 
   do (hl :-> sl) <- getNow l
      (hr :-> sr) <- getNow r
-     sn <- raceObs sl sr
-     return $ (hl `seq` hr) :-> (either (`seqS` r) (l `seqS`)) <$> sn
+     return $ (hl `seq` hr) :-> ((l `seqS`) <$> sr)
      
-
-beforeSwitch :: Behaviour a -> Behaviour a
-beforeSwitch b = Behaviour $ beforeNow (getNow b)
 
 getNowAgain :: BHT a -> Now (BHT a)
 getNowAgain (h :-> t) = evNow t >>= \case 
@@ -58,10 +54,22 @@ getNowAgain (h :-> t) = evNow t >>= \case
 
 data MemoInfo a = MemoInfo { time :: Time, cur :: BHT a } 
 
-memoB :: MVar (MemoInfo a) -> Now (BHT a)
-memoB m = do memo <- syncIO $ takeMVar m
-             t <- getRound 
-             res <- getNowAgain (cur memo)
-             syncIO $ putMVar m (MemoInfo t res)
-             return res
+memoB :: Now (BHT a) -> Behaviour a
+memoB m = Behaviour $ runMemo $ unsafePerformIO $ (,) <$> newMVar True <*> newEmptyMVar 
+ where runMemo (first,memo) = 
+         do isFirst <- syncIO $ takeMVar first
+            if isFirst 
+            then do v <- m
+                    t <- getRound 
+                    syncIO $ putMVar memo (MemoInfo t v)
+                    syncIO $ putMVar first False
+                    return v
+             else memoBVar memo
+
+memoBVar :: MVar (MemoInfo a) -> Now (BHT a)
+memoBVar m = do memo <- syncIO $ takeMVar m
+                t <- getRound 
+                res <- getNowAgain (cur memo)
+                syncIO $ putMVar m (MemoInfo t res)
+                return res
 

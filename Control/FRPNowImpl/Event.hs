@@ -62,7 +62,13 @@ data EventSyntax a
   | Delay Time (Event a)
   | Ret a
   | forall x. Bind (Event x) (x -> Event a) 
-
+{-
+unsafeIsNever 
+unsafeIsNever (Prim Never) = True
+unsafeIsNever (Bind n _)   = unsafeIsNever n
+unsafeIsNever (Delay t e)  = unsafeIsNever n
+unsafeIsNever _            = Flase
+-}
 newtype Event a = Ev (MVar (Time, EventSyntax a))
 
 newEvent :: EventSyntax a -> Event a
@@ -157,7 +163,7 @@ firstOb :: Event a -> Event a -> Now (Event a)
 firstOb = undefined
 
 raceObs :: Event a -> Event b -> Now (Event (Either a b))
-raceObs = undefined
+raceObs l r = first [Right <$> r,Left <$> l]
 
 first :: [Event a] -> Now (Event a)
 first e = planFirst (map (fmap pure) e)

@@ -1,3 +1,136 @@
+
+{-# LANGUAGE ScopedTypeVariables, LambdaCase #-}
+module Control.FRPNowImpl.Behaviour where
+import Control.Applicative
+import Control.Monad
+import Control.Monad.Fix
+import Control.Concurrent.MVar
+import System.IO.Unsafe
+import Control.FRPNowImpl.Event
+import Debug.Trace
+import Data.Maybe
+
+infixr 3 :-> 
+data BHT a = (:->) { headB :: a , tailB :: Event (Behaviour a) }
+           | SameAs (Behaviour a) (BHT a) 
+           | ConstB a
+
+
+getHT b = (normalizeBNF <$> getHT' b)  >>= return . \case 
+      ConstB x -> x :-> never
+      SameAs _ (SameAs _ _) -> error "Double same as!" 
+      SameAs _ (ConstB x) -> x :-> never
+      SameAs _ nf        -> nf
+      nf                 -> nf
+
+-- memo
+-- const
+-- same as
+
+newtype Behaviour a = Behaviour { getHT' :: Now (BHT a) }
+
+curIO :: Behaviour a -> Now a
+curIO b = headB <$> getHT b
+
+instance Monad Behaviour where
+  return a = Behaviour (return (ConstB a))
+  m >>= f = memo $ bind m f
+
+bind m f =  Behaviour $
+   do v <- getHT' m
+      case noSameAs (normalizeBNF v) of
+       ConstB x -> let v = f x in SameAs v <$> getHT' v
+       h :-> t  -> getHT' (f h  `switch'` fmap (>>= f) t)
+      
+
+
+instance MonadFix Behaviour where
+  mfix f =   Behaviour $  mfix (getHT . f . headB )
+
+switch b e = memo $ switch' b (sameAs <$> e)
+
+switch' ::  Behaviour a -> Event (Behaviour a) -> Behaviour a
+switch' b e = Behaviour  $ 
+               evNow e >>= \case 
+                 Just (_,a) -> getHT' a
+                 Nothing -> do h :-> t <- getHT b
+                               n <- raceObs t e
+                               return $ h :-> (either (`switch'` e) id) <$> n
+
+sameAs n = Behaviour $ SameAs n <$> getHT' n
+
+whenJust b = memo (whenJust' b)
+
+whenJust' :: forall a. Behaviour (Maybe a) -> Behaviour (Event a)
+whenJust' b = Behaviour $ 
+  do h :-> t  <- getHT b
+     let tw = fmap whenJust' t
+     case h of
+         Just x  -> return (pure x :-> tw)
+         Nothing -> do tn <- planIO (getHT <$> tw)
+                       return $ (tn >>= headB) :-> (tn >>= tailB)
+
+seqS l r = seqS' l r
+
+seqS' :: Behaviour x -> Behaviour a -> Behaviour a
+seqS' l r = Behaviour $ 
+  do (hl :-> sl) <- getHT l
+     (hr :-> sr) <- getHT r
+     return $ (hl `seq` hr) :-> ((l `seqS'`) <$> sr)
+
+
+
+getNowAgain :: BHT a -> Now (BHT a)
+getNowAgain (h :-> t) = evNow t >>= \case 
+      Just (_,b) -> getHT' b
+      Nothing    -> return (h :-> t)
+
+data MemoInfo a = Uninit (Behaviour a) | Init (BHT a) | SameAsS (Behaviour a) | ConstS a
+
+memo :: Behaviour a -> Behaviour a
+memo b = Behaviour $ unsafePerformIO $ runMemo <$> newMVar (Uninit b) where
+  runMemo m = 
+     do v <- syncIO $ takeMVar m 
+        res <- case v of
+                Uninit b  -> getHT' b 
+                Init m    -> getNowAgain m
+                SameAsS b -> SameAs b <$> getHT' b
+                ConstS x  -> return (ConstB x)
+        let (newState, res') = case normalizeBNF' res of
+                                SameAs n nf -> (SameAsS n, SameAs n nf)
+                                ConstB x     -> (ConstS x, SameAs (return x) (ConstB x))
+                                nf          -> (Init nf, nf)
+        syncIO $ putMVar m newState
+        return res'
+{-# NOINLINE memo #-}       
+noSameAs (SameAs _ (SameAs _ _)) = error "Double same as!"
+noSameAs (SameAs _ nf) = nf
+noSameAs n             = n
+
+
+normalizeBNF' (SameAs _ (SameAs n nf)) =  normalizeBNF $ SameAs n nf
+normalizeBNF' (SameAs _ (ConstB x))     = ConstB x
+normalizeBNF' nf              = nf
+
+
+normalizeBNF (SameAs _ (SameAs n nf)) =  normalizeBNF $ SameAs n nf
+normalizeBNF (SameAs _ (ConstB x))     =  ConstB x
+normalizeBNF nf              = nf
+
+
+
+
+instance Functor Behaviour where
+  fmap = liftM
+
+instance Applicative Behaviour where
+  pure = return
+  (<*>) = ap
+
+
+{-
+
+
 {-# LANGUAGE TupleSections,LambdaCase,ExistentialQuantification,GADTs,GeneralizedNewtypeDeriving #-}
 
 module Control.FRPNowImpl.Behaviour(Behaviour,switch,beforeSwitch, whenJust,seqB,curIO) where
@@ -22,11 +155,9 @@ data Behaviour a where
  Bnd        :: Behaviour a -> (a -> Behaviour b) -> Behaviour b
  WhenJust   :: Behaviour (Maybe a) -> Behaviour (Event a)
  SeqB       :: Behaviour x -> Behaviour a -> Behaviour a
-
 instance Monad Behaviour where
   return = Const
   (>>=)  = Bnd
-
 switch = Switch
 whenJust = WhenJust
 seqB = SeqB
@@ -64,7 +195,7 @@ getShape (B m) =
 getBehaviour :: Behaviour a -> Now (BehaviourSyntax a,BehaviourNF a)
 getBehaviour (B m) = 
  do (i, s, mnf) <- syncIO $ takeMVar m
-    j  <- trace "get" $ getRound
+    j  <- getRound
     (s',nf) <- maybeUpdate i s mnf j
     let nf' = if lastChange nf /= j
               then nf {prev = val nf, same = True }
@@ -212,5 +343,4 @@ instance Functor Behaviour where
 instance Applicative Behaviour where
   pure = return
   (<*>) = ap
-
-
+-}

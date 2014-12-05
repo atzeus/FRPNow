@@ -9,7 +9,7 @@ import Data.Maybe
 type Time = Double
 inf = 1/0
 
-type Behaviour a = Time -> a
+type Behaviour a = [(Time, Time -> a)]
 data Event a = a :@ Time
 
 
@@ -19,7 +19,7 @@ instance Monad Event where -- writer monad
   (a :@ t) >>= f = b :@ max t t' where (b :@ t') = f a
 
 switch :: Behaviour a -> Event (Behaviour a) -> Behaviour a
-switch b (s :@ ts) t = if t < ts then b t else s t
+switch b (s :@ ts) t = if t >= ts then s t else b t
 
 
 whenJust :: Behaviour (Maybe a) -> Behaviour (Event a)
@@ -31,8 +31,27 @@ whenJust f t = let t' = undefined -- min { t' >= t | isJust (f t') }
 seqB :: Behaviour x -> Behaviour a -> Behaviour a
 seqB s b t = s t `seq` b t
 
-beforeSwitch :: Behaviour a -> Behaviour a
-beforeSwitch f = f . before
+dfix :: (Behaviour a -> Behaviour a) -> Behaviour a
+dfix f = loop 0 (f undefined)
+  loop i b = loop (i + 1) $ f (limit i b)
+  limit i b = \t -> snd (b t) i
+
+eqFix f a = let x = f a
+            in if x = a
+               then x
+               else eqFix f a
+
+ let e = when (== 1) b
+     b = e >>= \e2 ->  pure 0 `switch` (1 <$ e1) `switch` (2 <$ e2)
+ in b
+
+
+
+-- i.e. fix until (delay b) == b
+-- with property : advance . delay = id
+-- but delay . advance = delay
+bfixm :: MonadFix m => (Behaviour a -> m (Behaviour a)) -> m (Behaviour a)
+bfixm f =  
 
 
 

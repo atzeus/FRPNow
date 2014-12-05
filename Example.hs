@@ -21,9 +21,6 @@ main = do screen <- initSDL
                  bxs <- cur (boxes mousePos buttons)
                  drawAll screen bxs
                  return quit
-
-
-
           
 boxes :: Behaviour Point -> Behaviour (Set MouseBtn) -> Behaviour (Behaviour [Box])
 boxes mousePos buttons = parList $ box `sampleOn` clicks MLeft 
@@ -35,32 +32,34 @@ boxes mousePos buttons = parList $ box `sampleOn` clicks MLeft
         let defineBox = Box <$> defineRect <*> pure red
         defineBox `until` release MLeft
         p2 <- cur mousePos
-        (r, mouseOver) <- cur $ dragRectMouseOver (rect p1 p2)
+        r  <- cur $ dragRect (rect p1 p2)
+        let mo = mouseOver r
         let toColor True  = green
             toColor False = red 
-        let color = toColor <$> mouseOver
-        (Box  <$> r <*> color)  `until` next (clicks MRight `during` mouseOver)
+        let color = toColor <$> mo
+        (Box  <$> r <*> color)  `until` clickOn r MRight 
 
-
-  dragRectMouseOver :: Rect -> Behaviour (Behaviour Rect, Behaviour Bool)
-  dragRectMouseOver r = -- notice fixpoint and delay
-        mdo let mouseOver = isInside <$> mousePos <*> dr
-            dr <- dragrect r (beforeSwitch mouseOver)
-            return (dr,mouseOver)
-                  
-
-  dragrect :: Rect -> Behaviour Bool -> Behaviour (Behaviour Rect)  
-  dragrect r mouseOver =  behaviour <$> open (loop r) where
-    loop r = do pure r `until` when mouseOver
-                p <- cur mousePos
-                let offset = mousePos >$< (.- p)
+  dragRect :: Rect -> Behaviour (Behaviour Rect)  
+  dragRect r =  behaviour <$> open (loop r) where
+    loop r = do pure r `until` clickOn (pure r) MMiddle
+                offset <- cur mouseOffset
                 let mr = moveRect r <$> offset
-                mr `until` when (not <$> mouseOver)
+                mr `until` release MMiddle
                 cur mr >>= loop
                         
+  mouseOffset :: Behaviour (Behaviour Point)
+  mouseOffset = do p <- cur mousePos
+                   return (mousePos >$< (.- p))
+   
+  clickOn :: Behaviour Rect -> MouseBtn -> Behaviour (Event ())
+  clickOn r b = next $ clicks b `during` mouseOver r
+
+  mouseOver :: Behaviour Rect -> Behaviour Bool
+  mouseOver r = isInside <$> mousePos <*> r
 
   clicks :: MouseBtn -> EventStream ()
-  clicks m  = repeatEv $ click m 
+  clicks m   = repeatEv $ click m 
+  releases m = repeatEv $ release m
   click m   = becomesTrue $ isDown m
   release m = becomesTrue $ not <$> isDown m
   isDown m  = (m `member`) <$> buttons
