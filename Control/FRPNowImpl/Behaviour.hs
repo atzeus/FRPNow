@@ -1,21 +1,74 @@
 
 {-# LANGUAGE ScopedTypeVariables, LambdaCase #-}
 module Control.FRPNowImpl.Behaviour where
-import Control.Applicative
+import Control.Applicative hiding (empty)
 import Control.Monad
 import Control.Monad.Fix
 import Control.Concurrent.MVar
 import System.IO.Unsafe
-import Control.FRPNowImpl.Event
+import Control.FRPNowImpl.NowTime
+import Control.FRPNowImpl.NewEvent
 import Debug.Trace
+import Data.Sequence
+import Data.Foldable (toList)
 import Data.Maybe
 
 infixr 3 :-> 
-data BHT a = (:->) { headB :: a , tailB :: Event (Behaviour a) }
-           | SameAs (Behaviour a) (BHT a) 
-           | ConstB a
+data BHT a = (:->) { headB :: a , tailB :: Seq (Event (Behaviour a)) }
+        --   | SameAs (Behaviour a) (BHT a) 
+
+newtype Behaviour a = B { getHT :: Now (BHT a) }
+
+instance Monad Behaviour where
+  return a = B $ return (a :-> empty)
+  m >>= f = B $
+   do h :-> t   <- getHT m
+      fh :-> th <- getHT (f h)
+      let t' = (>>= f) <$$> t
+      return $ fh :-> (t' >< th)
+
+switch ::  Behaviour a -> Event (Behaviour a) -> Behaviour a
+switch b e = B  $ 
+  getEv e >>= \case 
+    Just a  -> getHT a
+    Nothing -> do h :-> t <- getHT b
+                  return $ h :-> (e <| t)
+
+f <$$> m = fmap (fmap f) m
+
+seqS :: Behaviour x -> Behaviour a -> Behaviour a
+seqS l r = B $ 
+  do (hl :-> sl) <- getHT l
+     (hr :-> sr) <- getHT r
+     return $ (hl `seq` hr) :-> ((l `seqS`) <$$> sr)
+      
+
+whenJust :: Behaviour (Maybe a) -> Behaviour (Event a)
+whenJust b = B $ 
+  do h :-> t  <- getHT b
+     let tw = whenJust <$$> t
+     case h of
+         Just x  -> return (pure x :-> tw)
+         Nothing -> do tn <- firstNow (toList $ getHT <$$> tw)
+                       return $ (tn >>= headB) :-> tw
+
+firstNow :: [Event (Now a)] -> Now (Event a)
+firstNow l@(h:t) = everyRoundEv $ 
+   tryAll l >>= maybe (return Nothing) (Just <$>) 
 
 
+tryAll :: [Event a] -> Now (Maybe a)
+tryAll []      = return Nothing
+tryAll (h : t) = getEv h >>= \case
+                  Just x -> return $ Just x 
+                  Nothing -> tryAll t
+
+getNowAgain :: BHT a -> Now (BHT a)
+getNowAgain (h :-> t) = tryAll (toList t) >>= \case 
+      Just x  -> getHT x >>= getNowAgain
+      Nothing -> return (h :-> t)
+
+{-
 getHT b = (normalizeBNF <$> getHT' b)  >>= return . \case 
       ConstB x -> x :-> never
       SameAs _ (SameAs _ _) -> error "Double same as!" 
@@ -27,7 +80,7 @@ getHT b = (normalizeBNF <$> getHT' b)  >>= return . \case
 -- const
 -- same as
 
-newtype Behaviour a = Behaviour { getHT' :: Now (BHT a) }
+
 
 curIO :: Behaviour a -> Now a
 curIO b = headB <$> getHT b
@@ -49,13 +102,7 @@ instance MonadFix Behaviour where
 
 switch b e = memo $ switch' b (sameAs <$> e)
 
-switch' ::  Behaviour a -> Event (Behaviour a) -> Behaviour a
-switch' b e = Behaviour  $ 
-               evNow e >>= \case 
-                 Just (_,a) -> getHT' a
-                 Nothing -> do h :-> t <- getHT b
-                               n <- raceObs t e
-                               return $ h :-> (either (`switch'` e) id) <$> n
+
 
 sameAs n = Behaviour $ SameAs n <$> getHT' n
 
@@ -72,18 +119,11 @@ whenJust' b = Behaviour $
 
 seqS l r = seqS' l r
 
-seqS' :: Behaviour x -> Behaviour a -> Behaviour a
-seqS' l r = Behaviour $ 
-  do (hl :-> sl) <- getHT l
-     (hr :-> sr) <- getHT r
-     return $ (hl `seq` hr) :-> ((l `seqS'`) <$> sr)
 
 
 
-getNowAgain :: BHT a -> Now (BHT a)
-getNowAgain (h :-> t) = evNow t >>= \case 
-      Just (_,b) -> getHT' b
-      Nothing    -> return (h :-> t)
+
+
 
 data MemoInfo a = Uninit (Behaviour a) | Init (BHT a) | SameAsS (Behaviour a) | ConstS a
 
@@ -127,7 +167,7 @@ instance Applicative Behaviour where
   pure = return
   (<*>) = ap
 
-
+-}
 {-
 
 
