@@ -1,7 +1,7 @@
 
 {-# LANGUAGE ScopedTypeVariables, LambdaCase #-}
 module Control.FRPNowImpl.Behaviour where
-import Control.Applicative hiding (empty)
+import Control.Applicative hiding (empty,Const)
 import Control.Monad
 import Control.Monad.Fix
 import Control.Concurrent.MVar
@@ -14,74 +14,125 @@ import Data.Foldable (toList)
 import Data.Maybe
 
 infixr 3 :-> 
-data BHT a = (:->) { headB :: a , tailB :: Seq (Event (Behaviour a)) }
-        --   | SameAs (Behaviour a) (BHT a) 
+data BHT a = (:->) { headB :: Now a , tailB :: Event (Behaviour a) }
+           | SameAs (Behaviour a) (BHT a) 
+           | Const a
+   
 
 newtype Behaviour a = B { getHT :: Now (BHT a) }
 
+              
+curIO :: Behaviour a -> Now a
+curIO b = getHT b >>= headB
+
 instance Monad Behaviour where
-  return a = B $ return (a :-> empty)
-  m >>= f = B $
-   do h :-> t   <- getHT m
-      fh :-> th <- getHT (f h)
-      let t' = (>>= f) <$$> t
-      return $ fh :-> (t' >< th)
+  return a = B $ return (return a :-> never)
+  m >>= f = memo $ bind m f
 
-switch ::  Behaviour a -> Event (Behaviour a) -> Behaviour a
-switch b e = B  $ 
+bind m f = B $
+   do v <- noSameAs <$> getHT m
+      case v of
+       h :-> t -> do x <- h
+                     getHT (f x `switch'` ((`bind` f) <$> t))
+       Const x -> let v = f x 
+                  in SameAs v <$> getHT v
+
+switch b e = memo $ switch' b e
+
+switch' ::  Behaviour a -> Event (Behaviour a) -> Behaviour a
+switch' b e = B  $ 
   getEv e >>= \case 
-    Just a  -> getHT a
-    Nothing -> do h :-> t <- getHT b
-                  return $ h :-> (e <| t)
+    Just a  -> SameAs a <$> getHT a
+    Nothing -> do h :-> t <- normHT <$> getHT b
+                  ts <- firstObsNow t e
+                  return $ h :-> ts
 
-f <$$> m = fmap (fmap f) m
+whenJust b = memo $ whenJust b
+
+whenJust' :: Behaviour (Maybe a) -> Behaviour (Event a)
+whenJust' b = B $ 
+  noSameAs <$> getHT b >>= \case
+      Const x -> return $ Const (maybe never return x)
+      h :-> t -> do let tw = whenJust' <$> t
+                    h <- constMemo (head h tw)
+                    return (h :-> tw)
+  where head h tw = h >>= \case 
+         Just x  -> return $ pure x
+         Nothing -> join <$> planIO (curIO <$> tw)
+
+{-
 
 seqS :: Behaviour x -> Behaviour a -> Behaviour a
 seqS l r = B $ 
   do (hl :-> sl) <- getHT l
      (hr :-> sr) <- getHT r
-     return $ (hl `seq` hr) :-> ((l `seqS`) <$$> sr)
+     h  <- constMemo $ hl >> hr
+     let t = (l `seqS`) <$> sr
+     return $ h :-> t
       
-
-whenJust :: Behaviour (Maybe a) -> Behaviour (Event a)
-whenJust b = B $ 
-  do h :-> t  <- getHT b
-     let tw = whenJust <$$> t
-     case h of
-         Just x  -> return (pure x :-> tw)
-         Nothing -> do tn <- firstNow (toList $ getHT <$$> tw)
-                       return $ (tn >>= headB) :-> tw
-
-firstNow :: [Event (Now a)] -> Now (Event a)
-firstNow l@(h:t) = everyRoundEv $ 
-   tryAll l >>= maybe (return Nothing) (Just <$>) 
+-}
 
 
-tryAll :: [Event a] -> Now (Maybe a)
-tryAll []      = return Nothing
-tryAll (h : t) = getEv h >>= \case
-                  Just x -> return $ Just x 
-                  Nothing -> tryAll t
 
 getNowAgain :: BHT a -> Now (BHT a)
-getNowAgain (h :-> t) = tryAll (toList t) >>= \case 
+getNowAgain (h :-> t) = getEv t >>= \case
       Just x  -> getHT x >>= getNowAgain
       Nothing -> return (h :-> t)
 
-{-
-getHT b = (normalizeBNF <$> getHT' b)  >>= return . \case 
-      ConstB x -> x :-> never
-      SameAs _ (SameAs _ _) -> error "Double same as!" 
-      SameAs _ (ConstB x) -> x :-> never
-      SameAs _ nf        -> nf
-      nf                 -> nf
+
+constMemo :: Now a -> Now (Now a)
+constMemo n = syncIO $ runMemo <$> newMVar (Left n) where
+  runMemo m = do v <- syncIO $ takeMVar m
+                 v' <- case v of
+                         Left x  -> x 
+                         Right x -> return x
+                 syncIO $ putMVar m (Right v')
+                 return v'
+
+
+data MemoInfo a = Uninit (Behaviour a) | Init (BHT a) | SameAsS (Behaviour a) | ConstS a
+
+memo :: Behaviour a -> Behaviour a
+memo b = B $ unsafePerformIO $ runMemo <$> newMVar (Uninit b) where
+  runMemo m = 
+     do v <- syncIO $ takeMVar m 
+        res <- case v of
+                Uninit b  -> getHT b 
+                Init m    -> getNowAgain m
+                SameAsS b -> SameAs b <$> getHT b
+                ConstS x  -> return (Const x)
+        let (newState, res') = case normalizeBNF res of
+                                SameAs n nf -> (SameAsS n, SameAs n nf)
+                                Const x     -> (ConstS x, SameAs (return x) (Const x))
+                                nf          -> (Init nf, nf)
+        syncIO $ putMVar m newState
+        return res'
+{-# NOINLINE memo #-}       
+noSameAs (SameAs _ (SameAs _ _)) = error "Double same as!"
+noSameAs (SameAs _ nf) = nf
+noSameAs n             = n
+
+normHT nf = case noSameAs (normalizeBNF nf) of
+             Const x -> return x :-> never
+             x       -> x
+
+normalizeBNF (SameAs _ (SameAs n nf)) =  normalizeBNF $ SameAs n nf
+normalizeBNF (SameAs _ (Const x))     =  Const x
+normalizeBNF nf              = nf
+
+instance Functor Behaviour where
+  fmap = liftM
+
+instance Applicative Behaviour where
+  pure = return
+  (<*>) = ap
 
 -- memo
 -- const
 -- same as
 
 
-
+{-
 curIO :: Behaviour a -> Now a
 curIO b = headB <$> getHT b
 
@@ -125,23 +176,6 @@ seqS l r = seqS' l r
 
 
 
-data MemoInfo a = Uninit (Behaviour a) | Init (BHT a) | SameAsS (Behaviour a) | ConstS a
-
-memo :: Behaviour a -> Behaviour a
-memo b = Behaviour $ unsafePerformIO $ runMemo <$> newMVar (Uninit b) where
-  runMemo m = 
-     do v <- syncIO $ takeMVar m 
-        res <- case v of
-                Uninit b  -> getHT' b 
-                Init m    -> getNowAgain m
-                SameAsS b -> SameAs b <$> getHT' b
-                ConstS x  -> return (ConstB x)
-        let (newState, res') = case normalizeBNF' res of
-                                SameAs n nf -> (SameAsS n, SameAs n nf)
-                                ConstB x     -> (ConstS x, SameAs (return x) (ConstB x))
-                                nf          -> (Init nf, nf)
-        syncIO $ putMVar m newState
-        return res'
 {-# NOINLINE memo #-}       
 noSameAs (SameAs _ (SameAs _ _)) = error "Double same as!"
 noSameAs (SameAs _ nf) = nf
@@ -377,10 +411,5 @@ delay t b = newBehaviour (Delay t b)
 
 -- end shared behaviour
 
-instance Functor Behaviour where
-  fmap = liftM
 
-instance Applicative Behaviour where
-  pure = return
-  (<*>) = ap
 -}
