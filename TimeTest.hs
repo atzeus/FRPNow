@@ -8,7 +8,7 @@ import Control.Applicative
 import Control.Monad hiding (when)
 import Control.Concurrent.MVar 
 import System.IO
-main = do runNow (testb )
+main = do runNow (testb ) >>= putStrLn . show
 
 {-
 test2 =  
@@ -20,8 +20,9 @@ test2 =
       return ()
 -}
 testb = 
-  do b <- count1 500000
-     e <- cur $ when ((== 5) <$> b)
+  do e <- asyncIO (threadDelay  1000000 >> return 1)
+     e2 <- asyncIO (threadDelay 200000 >> return 2)
+     --e <- cur $ when ((== 5) <$> b)
      --e <- count1 500000
      --v <- cur $ whenJust ( (\x -> if x > 3000 then Just 1 else Nothing) <$> b)
      --let b' = b `switch` (fmap return v)
@@ -30,14 +31,16 @@ testb =
 --     showChanges (f `switch` (fmap pure m))
 --     showChanges b
 --     bc <- cur $ bla e
-     showChanges (bla e)
-     return never
+     --sampleEvery 50000 b
 
+     return ((+) <$> e <*> e2)
+{-
 
 bla :: Event () -> Behaviour Int
 bla e1 = mdo e2 <- cur $ when $ (== 1) <$> b
              let  b = (pure 1) `switch` (pure 2 <$ e2)
              b
+-}
 {-
 bla e1 = let e = when $ (== 1) <$> b
              b = e >>= \e2 ->  pure 0  `switch` (pure 2 <$ e2)

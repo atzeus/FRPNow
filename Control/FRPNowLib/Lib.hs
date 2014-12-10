@@ -2,7 +2,8 @@
 
 module Control.FRPNowLib.Lib where
 
-import Control.FRPNowImpl.Event
+import Control.FRPNowImpl.NowTime
+import Control.FRPNowImpl.NewEvent
 import Control.FRPNowImpl.Behaviour
 import Control.Applicative
 import Control.Monad hiding (when,until)

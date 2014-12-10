@@ -1,6 +1,6 @@
 
-{-# LANGUAGE Rank2Types,GeneralizedNewtypeDeriving, LambdaCase #-}
-module Control.FRPNowImpl.NowTime(TimeL, NowL, Time,Now, bigBang, maxTime, syncIO, startIO, everyRound, hasPassed, startNowL, startNow) where
+{-# LANGUAGE TupleSections,Rank2Types,GeneralizedNewtypeDeriving, LambdaCase #-}
+module Control.FRPNowImpl.NowTime(TimeL, NowL, Time,Now, bigBang, pigsFly, maxTime, syncIO, startIO, doAtTime, doFutureTime,hasPassed, earliestObs, startNowL, startNowTime) where
 
 import Control.Concurrent
 import Control.Concurrent.MVar
@@ -10,8 +10,9 @@ import Control.Applicative
 import Control.Monad.Trans
 import System.IO.Unsafe
 import Control.Monad
+import Debug.Trace
 
-data TimeStamp = MinBound | TimeStamp Integer deriving (Ord,Eq)
+data TimeStamp = MinBound | TimeStamp Integer | MaxBound deriving (Ord,Eq)
 
 data TimeSyntax s 
   = Max (TimeL s) (TimeL s)
@@ -31,7 +32,7 @@ data EveryRound s = EveryRound {
 
 data Env s = Env {
   curRound :: Integer,
-  everyRounds :: [EveryRound s],
+  everyRounds :: MVar [EveryRound s],
   nextRound :: MVar Integer,
   flag :: Flag
  }
@@ -41,6 +42,9 @@ maxTime l r = Syn $ unsafePerformIO $ newMVar (TimeSyntax MinBound (Max l r))
 
 bigBang :: TimeL s
 bigBang = Syn $ unsafePerformIO $ newMVar (Done MinBound)
+
+pigsFly :: TimeL s
+pigsFly = BaseTime $ unsafePerformIO $ newMVar Nothing 
 
 newtype NowL s a = NowL { runNowL :: StateT (Env s) IO a } deriving (Monad, Functor, Applicative)
 
@@ -59,9 +63,30 @@ startIO m = NowL $
            putMVar nextRound i
            signal flag
 
+doAtTime :: TimeL s -> NowL s () -> NowL s ()
+doAtTime t n = doFutureTime t (n >> return bigBang) >> return ()
+
+doFutureTime :: TimeL s -> NowL s (TimeL s) -> NowL s (TimeL s)
+doFutureTime t n = 
+  do m <- syncIO $ newMVar (Left t) 
+     everyRound $
+       do v <- syncIO $ takeMVar m 
+          (v',end) <- case v of
+            Left t -> hasPassed t >>= \case
+                        False -> return (v,False)
+                        True  -> do t2 <- n
+                                    done <- hasPassed t2
+                                    return (Right t2, done)
+            Right t -> (v,) <$> hasPassed t
+          syncIO $ putMVar m v'
+          return end
+                 
 
 addER :: EveryRound s -> NowL s ()
-addER r = NowL $ modify (\x -> x { everyRounds = r : everyRounds x} )
+addER r = NowL $ do s <- everyRounds <$> get
+                    v <- lift $ takeMVar s
+                    lift $ putMVar s (r : v)
+
 
 everyRound :: NowL s Bool -> NowL s (TimeL s)
 everyRound m = do mv <- syncIO newEmptyMVar 
@@ -77,12 +102,11 @@ trySyntax (SameAs t) =
        Nothing  -> Left (SameAs t)
 trySyntax (Max l r) = 
   do tl <- updateTime l
-     tr <- updateTime r
-     return $ case (tl,tr) of
-       (Just x       , Just y ) -> Right (max x y)
-       (Just x, Nothing)        -> Left (SameAs r)
-       (Nothing, Just y)        -> Left (SameAs l)
-       _                        -> Left (Max l r)
+     case tl of
+       Just x -> updateTime r >>= \case
+                   Just y -> return (Right (min x y))
+                   Nothing -> return (Left (SameAs r))
+       Nothing -> return $ Left (Max l r)
 
 updateTime :: TimeL s -> NowL s (Maybe TimeStamp)
 updateTime (BaseTime m) = NowL $ lift $ fmap TimeStamp <$> readMVar m
@@ -110,6 +134,9 @@ hasPassed t =
       Just b  -> r >= b 
       Nothing -> False
 
+earliestObs :: TimeL s -> TimeL s -> NowL s (TimeL s)
+earliestObs l r = everyRound $ (||) <$> hasPassed l <*> hasPassed r
+
 getCurRound = NowL $ TimeStamp . curRound <$> get
 
 startNowL :: (forall s. NowL s (TimeL s)) -> IO ()
@@ -123,27 +150,34 @@ startNowL m = do env <- newEnv
        if e then return () else loop flag ev
 
 newEnv :: IO (Env s)
-newEnv = Env 0 [] <$> newMVar 1 <*> newFlag
+newEnv = Env 0 <$> newMVar [] <*> newMVar 1 <*> newFlag
          
 runRound :: NowL s ()                                 
 runRound =  
   do s <- NowL $ get
      let er = everyRounds s
-     NowL $ put (s {everyRounds = []})
+     trace "starting round" $ return ()
+     er <- syncIO $ takeMVar (everyRounds s)
+     syncIO $ putMVar (everyRounds s) []
      b <- syncIO $ takeMVar (nextRound s) 
      syncIO $ putMVar (nextRound s) (b + 1)
      mapM_ takeER er
-     mapM_ runER er
+     trace "gonna run!" $ return ()
+     syncIO $ mapM_ (runERFork s) er
+     mapM_ readER er
+
+runERFork s v = forkIO $ evalStateT (runNowL $ runER v) s
 
 runER :: EveryRound s -> NowL s ()
 runER r@(EveryRound m (BaseTime mv)) =
    m >>= \case
     True -> NowL $ 
        do s <- get
+          trace "RunER" $ return ()
           lift $ putMVar mv $ Just (curRound s)
           return ()
-    False -> syncIO (putMVar mv Nothing)  >> addER r
-
+    False -> trace "Fail!" $ syncIO (putMVar mv Nothing)  >> addER r
+readER (EveryRound _ (BaseTime mv)) = syncIO (readMVar mv) >> return ()
 takeER (EveryRound _ (BaseTime mv)) = syncIO (takeMVar mv) >> return ()
 
 -- global NowL loop 
@@ -163,22 +197,28 @@ globalNowL = unsafePerformIO $
 
 globalLoop :: MVar (Env Global) -> Flag -> IO ()
 globalLoop n flag  = forever $ 
- do waitForSignal flag
+ do 
+    waitForSignal flag
+    trace "got flag" $ return ()
     e <- takeMVar n
+    trace "bla" $ return ()
     e' <- execStateT (runNowL runRound) e
+    trace "end round" $ return ()
     putMVar n e' 
 
 
-startNow :: NowL Global (TimeL Global) -> IO ()
-startNow m = 
+startNowTime :: NowL Global (TimeL Global) -> IO ()
+startNowTime m = 
   do end <- newEmptyMVar 
      e <- takeMVar globalNowL
+     trace "start Now!" $ return ()
      e' <- execStateT (runNowL $ m >>= checkEveryRound end) e
+     trace "End now!" $ return ()
      putMVar globalNowL e'
      readMVar end where
 
  checkEveryRound m e = everyRound $ 
-   hasPassed e >>= \case
+   trace "bla" $ hasPassed e >>= \case
      True  -> syncIO (putMVar m ()) >> return True
      False -> return False
                  

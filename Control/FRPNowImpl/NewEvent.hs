@@ -18,6 +18,8 @@ instance Applicative Event where
   pure = return
   (<*>) = ap
 
+never = undefined :@ pigsFly
+
 getEv :: Event a -> Now (Maybe a)
 getEv (x :@ t) = hasPassed t >>= return . \case
                  True -> Just x
@@ -29,32 +31,31 @@ asyncIO m =
      t <- startIO (m >>= writeIVar v)
      return (ivarVal v :@ t)
 
-everyRoundEv :: Now (Maybe a) -> Now (Event a)
-everyRoundEv m =  
- do v <- syncIO newIVar
-    t <- everyRound (tryRun v)
-    return (ivarVal v :@ t)
- where tryRun iv = m >>= \case
-        Just x -> syncIO (writeIVar iv x) >> return True
-        Nothing -> return False
+firstObsNow :: Event a -> Event a -> Now (Event a)
+firstObsNow l@(a :@ tl) r@(b :@ tr) = 
+ do t <- earliestObs tl tr
+    planIO (checkBoth :@ t)  where
+  checkBoth = getEv r >>= \case
+     Just x -> return x
+     Nothing -> getEv l >>= \case
+                    Just x -> return x
 
-
-{-
-firstObs :: Event a -> Event a -> Now (Event a)
-firstObs l r = everyRoundEv sample where
-  sample = do lv <- getEv l
-              rv <- getEv r
-              case (lv,rv) of
-               (_, Just r) -> return (Just r)
-               (Just l, _) -> return (Just l)
-               _           -> return Nothing
-
--}
 planIO :: Event (Now a) -> Now (Event a)
-planIO e = everyRoundEv tryRun where
-  tryRun = getEv e >>= \case
-       Just x -> Just <$> x
-       Nothing -> return Nothing
+planIO (a :@ t) = 
+ do v <- syncIO newIVar
+    doAtTime t (a >>= syncIO . writeIVar v)
+    return (ivarVal v :@ t)
+
+runNow :: Now (Event a) -> IO a
+runNow n = 
+  do v <- newIVar
+     startNowTime (ntime v)
+     return (ivarVal v) where
+ ntime v = 
+      do (a :@ t) <- n
+         doAtTime t (syncIO $ writeIVar v a)
+         return t
+
 
 
                    

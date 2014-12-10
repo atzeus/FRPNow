@@ -4,7 +4,8 @@ module Control.FRPNowLib.EventStream
 (EventStream, next, nextSim, emptyEs, repeatEv, merge, switchEs, singletonEs, fmapB, filterJusts, foldB, fold, during, sampleOn, parList, scanlEv, foldr1Ev, foldrEv, foldrSwitch, EventStreamM, emit,runEventStreamM, printAll)
   where
 
-import Control.FRPNowImpl.Event
+import Control.FRPNowImpl.NowTime
+import Control.FRPNowImpl.NewEvent
 import Control.FRPNowImpl.Behaviour
 import Control.FRPNowLib.Lib
 import Data.Maybe

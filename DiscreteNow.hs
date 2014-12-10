@@ -23,7 +23,7 @@ instance MonadFix Behaviour where
 switch ::  Behaviour a -> Event (Behaviour a) -> Behaviour a
 switch b e = Behaviour $ 
    evNow e >>= \case 
-      Just (i,a) -> getNow a
+      Just a -> getNow a
       Nothing    -> 
         do h :-> t <- getNow b
            n <- raceObs t e
