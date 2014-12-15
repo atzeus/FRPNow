@@ -12,6 +12,15 @@ import System.IO.Unsafe
 import Control.Monad
 import Debug.Trace
 
+{-
+Monad Event
+never
+asyncIO :: IO a -> Now (Event a)
+plan    :: Event (Now a) -> Now (Event a)
+firstObs :: Event a -> Event a -> Now (Event a)
+-}
+
+
 data TimeStamp = MinBound | TimeStamp Integer | MaxBound deriving (Ord,Eq)
 
 data TimeSyntax s 

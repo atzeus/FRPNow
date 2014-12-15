@@ -1,0 +1,46 @@
+
+{-# LANGUAGE GeneralizedNewtypeDeriving  #-}
+module Control.FRPNowImpl.FRPNow(
+  Event, never,evNow,
+  Now,syncIO,asyncIO,firstObsNow,planIO, runNow,
+  Behaviour,curIO, switch, whenJust) where
+
+import Control.Monad
+import Control.Applicative
+import qualified Control.FRPNowImpl.NowEvent as E
+import qualified Control.FRPNowImpl.Behaviour as B
+
+newtype Now       a = N { getN :: E.Now       E.Global a } deriving (Functor,Monad,Applicative)
+newtype Event     a = E { getE :: E.Event     E.Global a } deriving (Functor,Monad,Applicative)
+newtype Behaviour a = B { getB :: B.Behaviour E.Global a } deriving (Functor,Monad,Applicative)
+
+never :: Event a
+never = E $ E.never
+
+evNow :: Event a -> Now (Maybe a)
+evNow (E e) = N $ E.evNow e
+
+syncIO :: IO a -> Now a
+syncIO n = N $ E.syncIO n
+
+asyncIO :: IO a -> Now (Event a)
+asyncIO m = N $ E <$> E.asyncIO m
+
+firstObsNow :: Event a -> Event a -> Now (Event a)
+firstObsNow (E l) (E r) = N $ E <$> E.firstObsNow l r
+
+planIO :: Event (Now a) -> Now (Event a)
+planIO (E e) = N $ E <$> E.planIO (getN <$> e)
+
+curIO :: Behaviour a -> Now a
+curIO (B a) = N $ B.curIO a
+
+switch :: Behaviour a -> Event (Behaviour a) -> Behaviour a
+switch (B b) (E e) = B $ b `B.switch` (getB <$> e)
+
+whenJust :: Behaviour (Maybe a) -> Behaviour (Event a)
+whenJust (B b) = B $ E <$> B.whenJust b
+
+
+runNow :: Now (Event a) -> IO a
+runNow (N n) = E.runNowGlobal (getE <$> n)

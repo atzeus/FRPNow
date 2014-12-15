@@ -13,6 +13,8 @@ import Data.Maybe
 import Data.Set hiding (filter,fold, foldl,map)
 import Prelude hiding (until)
 
+(>$<) = flip (<$>)
+
 main = do screen <- initSDL
           runNow $
               do (evs,quit) <- runEventStreamM <$> open getEvents
@@ -21,6 +23,11 @@ main = do screen <- initSDL
                  bxs <- cur (boxes mousePos buttons)
                  drawAll screen bxs
                  return quit
+
+
+filterUp n@(SDL.MouseButtonDown _ _ m) = Just n
+filterUp _ = Nothing
+
           
 boxes :: Behaviour Point -> Behaviour (Set MouseBtn) -> Behaviour (Behaviour [Box])
 boxes mousePos buttons = parList $ box `sampleOn` clicks MLeft 
@@ -37,7 +44,8 @@ boxes mousePos buttons = parList $ box `sampleOn` clicks MLeft
         let toColor True  = green
             toColor False = red 
         let color = toColor <$> mo
-        (Box  <$> r <*> color)  `until` clickOn r MRight 
+        (Box  <$> r <*> color)  `until` clickOn r MRight
+
 
   dragRect :: Rect -> Behaviour (Behaviour Rect)  
   dragRect r =  behaviour <$> open (loop r) where
@@ -178,6 +186,7 @@ data Color   = Color {  r :: Double, g :: Double, b :: Double} deriving (Eq,Show
 
 red = Color 1 0 0 
 green = Color 0 1 0
+blue = Color 0 0 1
 
 getColor :: SDL.Surface -> Color -> IO SDL.Pixel
 getColor s c = 

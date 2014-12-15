@@ -16,4 +16,4 @@ waitForSignal :: Flag -> IO ()
 waitForSignal = takeMVar
 
 signal :: Flag -> IO ()
-signal v = tryPutMVar v () >> return ()
+signal v = do b <- tryPutMVar v (); return ()

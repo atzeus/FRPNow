@@ -1,4 +1,4 @@
-{-# LANGUAGE TypeOperators, ViewPatterns, RecursiveDo, ScopedTypeVariables #-}
+{-# LANGUAGE LambdaCase,NoMonomorphismRestriction,TypeOperators, ViewPatterns, RecursiveDo, ScopedTypeVariables #-}
 
 
 import Control.FRPNow
@@ -8,7 +8,7 @@ import Control.Applicative
 import Control.Monad hiding (when)
 import Control.Concurrent.MVar 
 import System.IO
-main = do runNow (testb ) >>= putStrLn . show
+main = do runNow (testb ) --  >>= putStrLn . show
 
 {-
 test2 =  
@@ -20,20 +20,33 @@ test2 =
       return ()
 -}
 testb = 
-  do e <- asyncIO (threadDelay  1000000 >> return 1)
-     e2 <- asyncIO (threadDelay 200000 >> return 2)
+  do e <- asyncIO (threadDelay 1000000 >> return 1)
+     --e2 <- asyncIO (threadDelay 10000000 >> return 2)
+     {-e2 <- asyncIO (threadDelay 2000000 >> return 2)
+     a <- planIO (return 3 <$ e)
+     -}
+--     a <- firstObsNow e e2
+     {-b <- count1 500000 :: Now (Behaviour Int)
+     let evs = b `sampleOn` (repeatEv $ change b)
+     let isEven x = x `mod` 2 == 0
+     let evs' = filterJusts $ (\x -> if isEven x then Just x else Nothing) <$> evs
+     -}
+     --let getEm x = if x > 5 then Just x else Nothing
      --e <- cur $ when ((== 5) <$> b)
-     --e <- count1 500000
-     --v <- cur $ whenJust ( (\x -> if x > 3000 then Just 1 else Nothing) <$> b)
-     --let b' = b `switch` (fmap return v)
+{-
+     v <- cur $ whenJust ( (\x -> if x > 10 then Just 1 else Nothing) <$> b)
+     let b' = b `switch` (fmap return v)
      --let f = (,) <$> b' <*> e
      --m <- cur $ whenJust ( (\x -> if x == (1,10000) then Just (0,0) else Nothing) <$> f)
 --     showChanges (f `switch` (fmap pure m))
---     showChanges b
+--     sampleEvery 500000  
 --     bc <- cur $ bla e
+     let f =  (+) <$> b <*> b'
+-}
+     ev <- cur $ bla e
      --sampleEvery 50000 b
-
-     return ((+) <$> e <*> e2)
+  --   e <- cur $ when ((== (21)) <$> f)
+     return ev  -- ((+) <$> e2 <*> e)
 {-
 
 bla :: Event () -> Behaviour Int
@@ -46,6 +59,14 @@ bla e1 = let e = when $ (== 1) <$> b
              b = e >>= \e2 ->  pure 0  `switch` (pure 2 <$ e2)
          in b
 -}
+
+bla :: Event Int -> Behaviour (Event Int)
+bla e = loop where
+  loop = getNow e >>= \case
+           Just a -> pure (pure 1)
+           Nothing -> do e' <- join <$> plan (loop <$ e) 
+                         pure e' `switch` (loop <$ e')
+            
 sampleEvery :: (Eq a, Show a) => Int -> Behaviour a -> Now ()
 sampleEvery delay b = loop where
  loop = do v <- cur b

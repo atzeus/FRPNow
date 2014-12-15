@@ -1,12 +1,10 @@
-{-# LANGUAGE DeriveFunctor,FlexibleInstances,ConstraintKinds,ViewPatterns,NoMonomorphismRestriction,MultiParamTypeClasses ,FlexibleContexts,TypeOperators, LambdaCase, ScopedTypeVariables, Rank2Types, GADTs, TupleSections,GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE DeriveFunctor,FlexibleInstances,ConstraintKinds,ViewPatterns,NoMonomorphismRestriction,MultiParamTypeClasses ,FlexibleContexts,TypeOperators, LambdaCase, ScopedTypeVariables, Rank2Types, GADTs, TupleSections,GeneralizedNewtypeDeriving, UndecidableInstances #-}
 
 module Control.FRPNowLib.EventStream
 (EventStream, next, nextSim, emptyEs, repeatEv, merge, switchEs, singletonEs, fmapB, filterJusts, foldB, fold, during, sampleOn, parList, scanlEv, foldr1Ev, foldrEv, foldrSwitch, EventStreamM, emit,runEventStreamM, printAll)
   where
 
-import Control.FRPNowImpl.NowTime
-import Control.FRPNowImpl.NewEvent
-import Control.FRPNowImpl.Behaviour
+import Control.FRPNowImpl.FRPNow
 import Control.FRPNowLib.Lib
 import Data.Maybe
 import Control.Monad hiding (when)
@@ -131,6 +129,7 @@ parList :: EventStream (BehaviourEnd b ()) -> Behaviour (Behaviour [b])
 parList = foldB (pure []) (flip (.:)) 
 
 
+
 -- See reflection without remorse for which performance problem this construction solves...
 
 type Evs     x = Seq (EvsView x)
@@ -203,7 +202,7 @@ printAll evs = do e2 <- cur (nextSim evs)
                   plan (fmap loop e2)
                   return () where
   loop l = 
-      do syncIO (putStrLn (show l)) 
+      do syncIO (mapM_ (putStrLn . show) l)
          e2 <- cur (nextSim evs)
          plan (fmap loop e2)
          return ()            
