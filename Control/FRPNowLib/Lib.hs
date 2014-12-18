@@ -2,6 +2,7 @@
 
 module Control.FRPNowLib.Lib where
 
+
 import Control.FRPNowImpl.FRPNow
 import Control.Applicative
 import Control.Monad hiding (when,until)
@@ -75,6 +76,9 @@ becomesTrue b = do v <- b
                    then do e <- when (not <$> b)
                            join <$> plan (when b <$ e)
                    else when b
+
+snapshot :: Event a -> Behaviour b -> Behaviour (Event (a,b))
+snapshot e b = plan $ (\x -> (x,) <$> b) <$> e
 
 (<@>) :: Behaviour (a -> b) -> Event a -> Behaviour (Event b)
 b <@> e = plan $ fmap (\x -> b <*> pure x) e

@@ -7,7 +7,6 @@ import Control.Monad.Fix
 import Control.Concurrent.MVar
 import System.IO.Unsafe
 import Control.FRPNowImpl.NowEvent
-import Debug.Trace
 import Data.Sequence
 import Data.Foldable (toList)
 import Data.Maybe
@@ -48,7 +47,7 @@ switch' b e = B  $
     Just a  -> SameAs a <$> getHT a
     Nothing -> normHT <$> getHT b >>= \case
         h :-> t -> do let t' = (`switch'` e) <$> t
-                      ts <- firstObsNow t' e
+                      ts <- t' `firstObs` e
                       return $ h :-> ts
         Const x -> return (pure x :-> e)
 
@@ -156,6 +155,7 @@ instance Functor (Behaviour s) where
 instance Applicative (Behaviour s) where
   pure = return
   (<*>) = ap
+
 
 
 

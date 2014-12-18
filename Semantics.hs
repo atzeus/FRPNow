@@ -9,7 +9,7 @@ import Data.Maybe
 type Time = Double
 inf = 1/0
 
-type Behaviour a = [(Time, Time -> a)]
+type Behaviour a = Time -> a
 data Event a = a :@ Time
 
 

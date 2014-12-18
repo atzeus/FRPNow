@@ -11,9 +11,9 @@ newIVar = IVar <$> newEmptyMVar
 
 writeIVar :: IVar a -> a -> IO ()
 writeIVar (IVar m) a = 
-  tryReadMVar m >>= \case
+  {-tryReadMVar m >>= \case
     Just x -> error "Written to IVar twice!"
-    Nothing -> putMVar m a
+    Nothing -> -} putMVar m a
 
 ivarVal :: IVar a -> a
 ivarVal (IVar a) = unsafePerformIO $ readMVar a

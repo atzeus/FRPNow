@@ -1,5 +1,5 @@
 {-# LANGUAGE TypeSynonymInstances,Rank2Types,TupleSections,LambdaCase,ExistentialQuantification,GADTs,GeneralizedNewtypeDeriving #-}
-module Control.FRPNowImpl.NowEvent(Event,never,evNow,Now,runNow,runNowGlobal,syncIO,asyncIO,firstObsNow,planIO,Global) where
+module Control.FRPNowImpl.NowEvent(Event,never,evNow,Now,runNow,runNowGlobal,syncIO,asyncIO,firstObs,planIO,Global) where
 
 import Control.Applicative
 import Control.Concurrent
@@ -12,121 +12,103 @@ import Control.Monad.Reader
 import Debug.Trace
 import Data.Maybe
 
+data Time = MinBound | Time Integer deriving (Ord,Eq)
+
+
+newtype Event s a = E { runEv :: Time -> Maybe (Time, a) }
+
+
+never = E $ const $ Nothing
+
 instance Functor (Event s) where
-  fmap = liftM
+  fmap f e = E $ \t -> case runEv e t of
+                        Just (t,x) -> Just (t,f x)
+                        Nothing  ->  Nothing
+
 
 instance Applicative (Event s) where
   pure = return
   (<*>) = ap
 
-data Time = MinBound | Time Integer | MaxBound deriving (Show,Ord,Eq)
+instance Monad (Event s) where
+  return x = E $ const (Just (MinBound,x))
+  m >>= f  = E $ \t -> 
+      -- maybe monad
+      do (ta,a) <- runEv m t 
+         (tx,x) <- runEv (f a) t
+         Just (max ta tx, x)
 
-instance Bounded Time where
-  minBound = MinBound
-  maxBound = MaxBound
+first :: Event s a -> Event s a -> Event s a
+first l r = E $ \t -> 
+  case runEv r t of
+    Just (tr,r) -> 
+       Just $ case runEv (prev l) t of
+         Just (tl,l) -> if tr <= tl then (tr,r) else (tl,l)
+         Nothing     -> (tr,r)
+    Nothing -> runEv l t
 
-evNow :: Event s a -> Now s (Maybe a)
-evNow e =  evNowTime e >>= return . \case 
-             Right (_,x) -> Just x
-             Left _      -> Nothing
+ where prev x = E $ \t -> 
+        case t of
+         MinBound -> Nothing
+         Time i -> runEv x (Time (i - 1)) 
 
-evNowTime :: Event s a -> Now s (Either Bool (Time, a))
-evNowTime e = 
- do e' <- rewriteEv e 
-    r <- case e' of
-     Never           -> return $ Left True
-     Ret x           -> return $ Right (minBound,x)
-     Delay t x       -> evNowTime x >>= return . \case 
-                         Left b     -> Left b
-                         Right (t',e) -> Right (max t t', e)
-     r               -> return $ Left False
-    return r
 {-
-instance Show (EventSyntax s a) where
-  show (Prim _) = "p"
-  show Never    = "n"
-  show (Delay t e) = "d" ++ show t ++ show e
-  show (First l r) = "f(" ++ show l ++ "," ++ show r ++ ")"
-  show (Ret x)     = "r"
-  show (Bind d f)  = "b" ++ show d
--}
-data EventSyntax s a 
-  = Prim (PrimEv s a)
-  | Never
-  | Delay Time (Event s a)
-  | Ret a
-  | forall x. Bind (Event s x) (x -> Event s a) 
+memo :: Event s a -> Event s a
+memo e = E $ \t -> unsafePerformIO $ runMemo t where
+  mvar = unsafePerformIO $ newMVar (Left (Nothing,MinBound,e))
+  runMemo t = 
+    do r <- takeMVar mvar 
+       let r' = update t r
+       putMVar mvar r'
+       return (getRes t r')
+  update t (Left (v,d,e)) =     
+           case v of
+             Just tp | tp >= t -> Left (v,d,e)
+             _       -> case runEv e t of
+                           Left (Just (Delay d' e')) -> Left (Just t, max d d' ,e')
+                           Left _  -> Left (Just t, d ,e)
+                           Right v -> Right v
+  update t v = v 
+  getRes t (Right (tu,x)) | tu <= t = Right (tu,x)
+  getRes t (Left     = Nothing
 
--- start non-shared events
+{-# NOINLINE memo #-}  
+-}
 {-
-type Event = EventSyntax
-instance Monad (EventSyntax s)where
-  return = Ret
-  (>>=)  = Bind
-       
-never = Never
-first = First
-delay = Delay
-primEv = Prim . PrimEv
-rewriteEv :: Event s a -> Now s (Event s a)
-rewriteEv = rewriteEvSyntax
--- end non-shared events 
--}
--- start shared events
+never = E $ const Nothing
 
-newtype Event s a = Ev (MVar (Time, EventSyntax s a))
+instance Functor (Event s) where
+  fmap f e = E $ \t -> case runEv e t of
+                        Just (t,x) -> Just (t,f x)
+                        Nothing    -> Nothing
 
-newEvent :: EventSyntax s a -> Event s a
-newEvent s = Ev $ unsafePerformIO $ newMVar (minBound,s)
-{-# NOINLINE newEvent #-}
+
+instance Applicative (Event s) where
+  pure = return
+  (<*>) = ap
 
 instance Monad (Event s) where
-  return x = newEvent (Ret x)
-  m >>= f  = newEvent (Bind m f)
+  return x = E $ const (Just (MinBound,x))
+  m >>= f  = E $ \t -> 
+      do (ta,a) <- runEv m t
+         Left (Just (f a))
 
-never = newEvent Never
-delay t = newEvent . Delay t
-primEv  = newEvent . Prim . PrimEv
-
-
-
-rewriteEv :: Event s a -> Now s (EventSyntax s a)
-rewriteEv (Ev e) = 
-  do (i, s) <- syncIO $ takeMVar e
-     j      <- Time <$> getRound
-     s' <- if i == j then return s else rewriteEvSyntax s
-     syncIO $ putMVar e (j,s')
-     return s'
---- end shared events 
-
-                   
-rewriteEvSyntax :: EventSyntax s a -> Now s (EventSyntax s a)
-rewriteEvSyntax = \case 
-  Never     -> return Never
-  Prim e   -> getPrimEv e >>= return . \case 
-                Just (i,x)  -> Delay i (return x)
-                Nothing     -> Prim e
-  Bind e f  -> evNowTime e >>= \case 
-                Right  (i,x) -> rewriteEv (delay i (f x))
-                Left False  -> return (Bind e f)
-                Left True   -> return Never
-  Delay t b -> rewriteEv b >>= return . \case
-                   Never       -> Never
-                   Delay t' b' -> Delay (max t t') b'
-                   _           -> Delay t b
-  Ret x     -> return (Ret x)
-
-earliest (Just (i,a)) (Just (j,b)) 
-             | j <= i    = Just (j,b)
-             | otherwise = Just (i,a)
-earliest _ (Just v)      = Just v
-earliest (Just v) _      = Just v
-
-earliest Nothing Nothing = Nothing
+first :: Event s a -> Event s a -> Event s a
+first l r = E $ \t -> 
+  case runEv r t of
+    Just (tr,r) -> 
+       Just $ case runEv (prev l') t of
+         Just (tl,l) -> if tr <= tl then (tr,r) else (tl,l)
+         Nothing     -> (tr,r)
+    Nothing -> runEv l t
+ where l' = memo l 
+       prev x = E $ \t -> 
+        case t of
+         MinBound -> Nothing
+         Time i -> runEv x (Time (i - 1)) 
+-}
 
 
-
-newtype PrimEv s a = PrimEv (MVar (Maybe (Integer, a)))
 
 -- end events, start now
 
@@ -141,71 +123,78 @@ newtype Now s a = Now { runNow' ::  ReaderT (Env s) IO a } deriving (Functor, Ap
 
 getEnv = Now $ ask
 
-getPrimEv :: PrimEv s a -> Now s (Maybe (Time,a))
-getPrimEv (PrimEv r) = 
-  do j <- getRound
-     v <- syncIO $ readMVar r
-     return $ v >>= laterThanNow j where
-  laterThanNow j (i,a) = if i <= j then Just (Time i,a) else Nothing
-
 getRound :: Now s Integer
 getRound =  curRound <$> getEnv 
 
 syncIO m = Now $ lift m
 
-data Plan s = forall a. Plan (Event s (Now s a))  (MVar (Maybe (Integer, a)))
-            | forall a. First (Event s a) (Event s a) (MVar (Maybe (Integer, a)))
+data Plan s = forall a. Plan (Event s (Now s a))  (MVar Time) (MVar (Maybe (Time,a)))
+
+type PrimEv a = MVar (Maybe (Time, a))
+
+firstObs :: Event s a -> Event s a -> Now s (Event s a)
+firstObs l r = evNow r >>= \case
+   Just n  -> return (pure n)
+   Nothing -> evNow l >>= \case
+               Just n  -> return (pure n)
+               Nothing -> return (first l r)
+
+toEv :: PrimEv a -> Event s a 
+toEv m = E $ \t -> case unsafePerformIO $ readMVar m of
+            Just (tr,a) | tr <= t -> Just (tr,a)
+            _ -> Nothing
+{-# NOINLINE toEv #-}
 
 asyncIO :: IO a -> Now s (Event s a)
 asyncIO m = 
       do r <- syncIO $ newMVar Nothing
          env <- getEnv
          syncIO $ forkIO $ m >>= setVal env r
-         return (primEv r)
+         return (toEv r)
  where setVal env r a = 
         do i <- takeMVar (nextRound env)
-           swapMVar r (Just (i,a))
+           swapMVar r (Just (Time i,a))
            signal (flag env)
            putMVar (nextRound env) i
+
+prevRound = Time . (\x -> x - 1) <$> getRound
 
 planIO :: Event s (Now s a) -> Now s (Event s a)
 planIO e = 
   do r <- syncIO $ newEmptyMVar
-     tryPlan (Plan e r)
-     return (primEv r)
+     i <- prevRound
+     bound <- syncIO $ newMVar i
+     tryPlan (Plan e bound r)
+     return (toEvPlan e bound r)
 
-firstObsNow :: Event s a -> Event s a -> Now s (Event s a)
-firstObsNow l r = 
-    do m <- syncIO $ newEmptyMVar
-       tryPlan (First l r m)
-       return (primEv m)
 
-tryPlan :: Plan s -> Now s ()
-tryPlan p@(First l r m) = 
-  evNowTime r >>= \case 
-    Right (_,a) -> do i <- getRound
-                      syncIO $ putMVar m (Just (i,a))
-    Left x -> evNowTime l >>= \case 
-                Right (_, a) -> do i <- getRound
-                                   syncIO $ putMVar m (Just (i,a))
-                Left y -> do pl <- plans <$> getEnv
-                             if x && y
-                             then return ()
-                             else do ls <- syncIO $ takeMVar pl
-                                     syncIO $ putMVar pl (p : ls)
-                             syncIO $ putMVar m Nothing
-                              
 
-tryPlan p@(Plan e m) = 
+toEvPlan :: Event s (Now s a) -> MVar Time -> MVar (Maybe (Time,a)) -> Event s a 
+toEvPlan e b m = E $ \t -> 
+     case runEv e t of
+       Just _ -> case unsafePerformIO $ readMVar m of
+                    Just (tr,a) | tr <= t -> Just (tr,a)
+                    _ -> Nothing
+       Nothing -> Nothing
+{-# NOINLINE toEvPlan #-}
+
+evNow :: Event s a -> Now s (Maybe a)
+evNow e = fmap snd <$> evNowTime e
+
+evNowTime :: Event s a -> Now s (Maybe (Time,a))
+evNowTime e = runEv e . Time <$> getRound
+  
+tryPlan p@(Plan e b m) = 
   evNowTime e >>= \case
-   Right (_,n)  -> do i <- getRound
-                      a <- n
-                      syncIO $ putMVar m (Just (i,a))
-   Left False  -> do pl <- plans <$> getEnv
-                     ls <- syncIO $ takeMVar pl
-                     syncIO $ putMVar pl (p : ls)
+   Just (_,n)  -> do i <- getRound
+                     a <- n
+                     syncIO $ putMVar m (Just (Time i,a))
+   Nothing     -> do planPlan p
                      syncIO $ putMVar m Nothing
-   Left True    -> syncIO $ putMVar m Nothing
+
+planPlan p =  do pl <- plans <$> getEnv
+                 ls <- syncIO $ takeMVar pl
+                 syncIO $ putMVar pl (p : ls)
 
 incRound :: Env s -> IO (Env s)
 incRound env = 
@@ -217,15 +206,13 @@ runRound :: Env s -> IO ()
 runRound env = 
       do pl <- takeMVar (plans env)
          putMVar (plans env) []
-         mapM_ lockPlan pl
-         putStrLn (show $ length pl)
+         mapM_ (lockPlan (curRound env)) pl
+         --putStrLn (show $ length pl)
          mapM_ (runPlan env) pl
          mapM_ waitPlan pl
-  where lockPlan (Plan _ m)    = takeMVar m >> return ()
-        lockPlan (First _ _ m) = takeMVar m >> return ()
+  where lockPlan i (Plan _ b m)  = swapMVar b (Time (i - 1)) >> takeMVar m >> return ()
         runPlan env p       = forkIO (runReaderT (runNow' (tryPlan p)) env)
-        waitPlan (Plan _ m) = readMVar m >> return ()
-        waitPlan (First _ _ m) = readMVar m >> return ()
+        waitPlan (Plan _ _ m) = readMVar m >> return ()
 
 newEnv :: IO (Env s)
 newEnv = Env 0 <$> newMVar 1 <*> newMVar [] <*> newFlag
