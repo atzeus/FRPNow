@@ -7,28 +7,30 @@ module Control.FRPNowImpl.FRPNow(
 
 import Control.Monad
 import Control.Applicative
-import qualified Control.FRPNowImpl.NowEvent as E
+import qualified Control.FRPNowImpl.Now as N
+import qualified Control.FRPNowImpl.Event as E
 import qualified Control.FRPNowImpl.Behaviour as B
 
-newtype Now       a = N { getN :: E.Now       E.Global a } deriving (Functor,Monad,Applicative)
-newtype Event     a = E { getE :: E.Event     E.Global a } deriving (Functor,Monad,Applicative)
-newtype Behaviour a = B { getB :: B.Behaviour E.Global a } deriving (Functor,Monad,Applicative)
+
+newtype Now       a = N { getN :: N.Now       N.Global a } deriving (Functor,Monad,Applicative)
+newtype Event     a = E { getE :: E.Event     N.Global a } deriving (Functor,Monad,Applicative)
+newtype Behaviour a = B { getB :: B.Behaviour N.Global a } deriving (Functor,Monad,Applicative)
 
 never :: Event a
 never = E $ E.never
 
 evNow :: Event a -> Now (Maybe a)
-evNow (E e) = N $ E.evNow e
+evNow (E e) = N $ N.evNow e
 
 syncIO :: IO a -> Now a
-syncIO n = N $ E.syncIO n
+syncIO n = N $ N.syncIO n
 
 asyncIO :: IO a -> Now (Event a)
-asyncIO m = N $ E <$> E.asyncIO m
+asyncIO m = N $ E <$> N.asyncIO m
 
 
 planIO :: Event (Now a) -> Now (Event a)
-planIO (E e) = N $ E <$> E.planIO (getN <$> e)
+planIO (E e) = N $ E <$> N.planIO (getN <$> e)
 
 curIO :: Behaviour a -> Now a
 curIO (B a) = N $ B.curIO a
@@ -41,4 +43,4 @@ whenJust (B b) = B $ E <$> B.whenJust b
 
 
 runNow :: Now (Event a) -> IO a
-runNow (N n) = E.runNowGlobal (getE <$> n)
+runNow (N n) = N.runFRP (getE <$> n)

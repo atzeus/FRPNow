@@ -6,7 +6,8 @@ import Control.Monad
 import Control.Monad.Fix
 import Control.Concurrent.MVar
 import System.IO.Unsafe
-import Control.FRPNowImpl.NowEvent
+import Control.FRPNowImpl.Event
+import Control.FRPNowImpl.Now
 import Data.Sequence
 import Data.Foldable (toList)
 import Data.Maybe

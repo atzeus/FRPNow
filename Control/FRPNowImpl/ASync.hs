@@ -1,5 +1,5 @@
 {-# LANGUAGE Rank2Types,GeneralizedNewtypeDeriving #-}
-module Control.FRPNowImpl.ASync(Timestamp, RoundM, ASync,TimeIVar, prevTimestamp, async, waitEndRound, curRound, observeAt, forkASync, runASync,runRoundM) where
+module Control.FRPNowImpl.ASync(Timestamp, RoundM, ASync,TimeIVar, prevTimestamp, async, waitEndRound, prevRound, observeAt, forkASync, runASync,runRoundM,unsafeRunRoundM) where
 
 import Control.Monad.IO.Class
 import Control.Monad.Reader
@@ -37,13 +37,14 @@ runASync (ASync m) = RoundM m
 async :: IO a -> ASync s (TimeIVar s a)
 async m = ASync $ 
      do r <- liftIO $ newMVar Nothing
-        (_,curRound) <- ask
-        liftIO $ forkIO $ m >>= setVal curRound r
+        (flag,curRound) <- ask
+        liftIO $ forkIO $ m >>= setVal flag curRound r
         return (TimeIVar r)
- where setVal curRound r a = 
+ where setVal flag curRound r a = 
         do i <- takeMVar curRound
-           swapMVar r (Just (Timestamp (i + 1),a))
+           swapMVar r (Just (Timestamp i,a))
            putMVar curRound i
+           signal flag
 
 forkASync :: ASync s () -> ASync s ()
 forkASync (ASync m) = ASync $ 
@@ -51,22 +52,28 @@ forkASync (ASync m) = ASync $
      liftIO $ forkIO $ runReaderT m (flag,round)
      return ()
 
-curRound :: ASync s (Timestamp s)
-curRound =  ASync $ 
+prevRound :: ASync s (Timestamp s)
+prevRound =  ASync $ 
      do (_,curRound) <- ask
         i <- liftIO $ readMVar curRound
-        return (Timestamp (i + 1))
+        return (Timestamp (i - 1))
 
 observeAt :: TimeIVar s a -> Timestamp s -> Maybe (Timestamp s, a)
 observeAt (TimeIVar m) t = 
   case unsafePerformIO $ readMVar m of
       Just (t',a) | t' <= t -> Just (t',a)
-      Nothing               -> Nothing
+      _               -> Nothing
 
 runRoundM :: (forall s. RoundM s a) -> IO a
 runRoundM (RoundM m) = 
   do round <- newMVar 0
      flag <- newFlag
      runReaderT m (flag,round)
+  
+unsafeRunRoundM :: Flag -> RoundM s a -> IO a
+unsafeRunRoundM flag (RoundM m) = 
+  do round <- newMVar 0
+     runReaderT m (flag,round)
+
 
 
