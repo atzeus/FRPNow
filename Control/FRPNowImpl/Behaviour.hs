@@ -16,8 +16,6 @@ infixr 3 :->
 data BHT s a = (:->) { headB :: Now s a , tailB :: Event s (Behaviour s a) }
             | SameAs (Behaviour s a) (BHT s a) 
             | Const a
-   
-
 
 newtype Behaviour s a = B { getHT :: Now s (BHT s a) }
 

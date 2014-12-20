@@ -9,40 +9,49 @@ import System.IO.Unsafe
 
 data Time s = MinBound | Time (Timestamp s) deriving (Ord,Eq)
 
-data EvState s a = Delay (Time s) (Event s a) 
-                 | Occured (Time s) a
+data EvState s a = After (Time s) (Event s a) 
+                 | Occurred (Time s) a
 
 newtype Event s a = E { runEv' :: Time s -> EvState s a }
 
+again :: EvState s a -> Event s a
+again es = E $ \t ->
+ case es of
+  Occurred t' a 
+     | t' <= t   -> es
+     | otherwise -> After t (again es)
+  After t' e 
+     | t > t'    -> runEv' e t
+     | otherwise -> After t' (again es)
+
 runEv :: Event s a -> Time s -> Maybe (Time s,a)
 runEv e t = case runEv' e t of
-              Occured t a -> Just (t,a)
-              Delay _ _   -> Nothing
+              Occurred t a -> Just (t,a)
+              After  _ _   -> Nothing
 
 makeEvent :: (Timestamp s -> Maybe (Timestamp s, a)) -> Event s a
 makeEvent f = E $ \t -> 
   case t of
-    MinBound -> Delay MinBound (makeEvent f)
+    MinBound -> After MinBound (makeEvent f)
     Time t -> case f t of
-                Just (t,a) -> Occured (Time t) a
-                Nothing    -> Delay MinBound (makeEvent f)
+                Just (t,a) -> Occurred (Time t) a
+                Nothing    -> After (Time t) (makeEvent f)
 
 
-never = E $ const $ Delay MinBound never
-
+never = E $ const $ After MinBound never
 
 instance Monad (Event s) where
-  return x = E $ const (Occured MinBound x)
+  return x = E $ const (Occurred MinBound x)
   m >>= f  = memo $ bind m f
 
 
 bind m f = E $ \t -> 
     case runEv' m t of
-     Delay d m'   -> Delay d (bind m' f)
-     Occured t' x -> 
+     After d m'   -> After d (bind m' f)
+     Occurred t' x -> 
         case runEv' (f x) t of
-           Occured t'' y -> Occured (max t' t'') y
-           Delay t'' e   -> Delay (max t' t'') e
+           Occurred t'' y -> Occurred (max t' t'') y
+           After    t'' e -> After (max t' t'') e
 
 instance Functor (Event s) where
   fmap = liftM
@@ -55,27 +64,24 @@ first l r = memo $ first' l r
 first' :: Event s a -> Event s a -> Event s a
 first' l r = E $ \t -> 
   case runEv' r t of
-   Occured tr vr -> case prev l t of
-                      Occured tl vl -> if tl < tr then Occured tl vl else Occured tr vr
-                      _             ->  Occured tr vr
-   Delay dl r' -> case runEv' l t of
-                Occured tl vl -> Occured (max dl tl) vl
-                Delay dr l'     -> Delay (max dl dr) (first' l' r')
+   Occurred tr vr -> case prev l t of
+                      Occurred tl vl -> if tl < tr then Occurred tl vl else Occurred tr vr
+                      _             ->  Occurred tr vr
+   After dl r' -> case runEv' l t of
+                Occurred tl vl -> Occurred (max dl tl) vl
+                After dr l'     -> After (max dl dr) (first' l' r')
  where prev e t = case t of
-         MinBound -> Delay MinBound e
+         MinBound -> After MinBound e
          Time t -> runEv' e (Time $ prevTimestamp t)
 
 memo :: Event s a -> Event s a
 memo e = E $ \t -> unsafePerformIO $ runMemo t where
-  mvar = unsafePerformIO $ newMVar (Delay MinBound e)
+  mvar = unsafePerformIO $ newMVar (After MinBound e)
   {-# NOINLINE mvar #-}  
   runMemo t = 
-    do v <- update t <$> takeMVar mvar 
-       putMVar mvar v
-       return v
-  update t (Delay d e) = case runEv' e t of
-                           Occured t' a -> Occured (max d t') a
-                           Delay t' e   -> Delay (max d t') e
-  update t (Occured t' a) = Occured t' a
+    do es <- takeMVar mvar 
+       let es' = runEv' (again es) t
+       putMVar mvar es'
+       return es'
 {-# NOINLINE memo #-}  
 
