@@ -103,21 +103,6 @@ constMemo n = syncIO $ runMemo <$> newMVar (Left n) where
 
 data MemoInfo s a = Uninit (Behaviour s a) | Init (BHT s a) | SameAsS (Behaviour s a) | ConstS a
 
-{-
-memo' :: Behaviour s a -> Behaviour s a
-memo' b = B $ unsafePerformIO $ runMemo <$> newMVar False where
-  runMemo m = 
-     do v <- syncIO $ takeMVar m 
-        if v 
-         then syncIO $ putStrLn "Hallo!"
-         else return ()
-        res <- getHT b      
-        syncIO $ putMVar m False
-        return res
-{-# NOINLINE memo' #-}       
--}
-
-
 memo :: Behaviour s a -> Behaviour s a
 memo b = B $ unsafePerformIO $ runMemo <$> newMVar (Uninit b) where
   runMemo m = 
