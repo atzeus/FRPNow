@@ -11,12 +11,16 @@ import Control.FRPNowImpl.ConcFlag
 
 data Timestamp s = Timestamp Integer deriving (Ord,Eq)
 
-newtype RoundM s a = RoundM (ReaderT (Flag,MVar Integer) IO a) deriving (Monad,Applicative,Functor)
-newtype ASync s a = ASync (ReaderT (Flag,MVar Integer) IO a) deriving (Monad,Applicative,Functor)
+data Env s = Env {
+  flag :: Flag,
+  curRound :: MVar Integer,
+  waits    :: MVar [MVar ()]
+ }
 
+newtype RoundM s a = RoundM (ReaderT (Env s) IO a) deriving (Monad,Applicative,Functor)
+newtype ASync s a = ASync (ReaderT (Env s ) IO a) deriving (Monad,Applicative,Functor)
 
 newtype TimeIVar s a = TimeIVar (MVar (Maybe (Timestamp s, a)))
-
 
 prevTimestamp :: Timestamp s -> Timestamp s
 prevTimestamp (Timestamp i) = Timestamp (i - 1)
@@ -26,10 +30,14 @@ instance MonadIO (ASync s) where
 
 waitEndRound :: RoundM s ()
 waitEndRound = RoundM $ 
-     do (flag,curRound) <- ask
-        liftIO $ waitForSignal flag
-        i <- liftIO $ takeMVar curRound
-        liftIO $ putMVar curRound (i + 1)
+     do env <- ask
+        w <- liftIO $ takeMVar (waits env)
+        liftIO $ mapM_ takeMVar w
+        liftIO $ waitForSignal (flag env)
+        liftIO $ putMVar (waits env) []
+        i <- liftIO $ takeMVar (curRound env)
+        liftIO $ putMVar (curRound env) (i + 1)
+          
 
 runASync :: ASync s a -> RoundM s a
 runASync (ASync m) = RoundM m
@@ -37,25 +45,28 @@ runASync (ASync m) = RoundM m
 async :: IO a -> ASync s (TimeIVar s a)
 async m = ASync $ 
      do r <- liftIO $ newMVar Nothing
-        (flag,curRound) <- ask
-        liftIO $ forkIO $ m >>= setVal flag curRound r
+        env <- ask
+        liftIO $ forkIO $ m >>= setVal env r
         return (TimeIVar r)
- where setVal flag curRound r a = 
-        do i <- takeMVar curRound
+ where setVal env r a = 
+        do i <- takeMVar (curRound env)
            swapMVar r (Just (Timestamp i,a))
-           putMVar curRound i
-           signal flag
+           putMVar (curRound env) i
+           signal (flag env)
 
 forkASync :: ASync s () -> ASync s ()
 forkASync (ASync m) = ASync $ 
-  do (flag,round) <- ask
-     liftIO $ forkIO $ runReaderT m (flag,round)
+  do env <- ask
+     done <- liftIO $ newEmptyMVar
+     w <- liftIO $ takeMVar (waits env)
+     liftIO $ putMVar (waits env) (done : w)
+     liftIO $ forkIO $ runReaderT (m >> liftIO (putMVar done ())) env
      return ()
 
 prevRound :: ASync s (Timestamp s)
 prevRound =  ASync $ 
-     do (_,curRound) <- ask
-        i <- liftIO $ readMVar curRound
+     do env <- ask
+        i <- liftIO $ readMVar (curRound env)
         return (Timestamp (i - 1))
 
 observeAt :: TimeIVar s a -> Timestamp s -> Maybe (Timestamp s, a)
@@ -67,13 +78,15 @@ observeAt (TimeIVar m) t =
 runRoundM :: (forall s. RoundM s a) -> IO a
 runRoundM (RoundM m) = 
   do round <- newMVar 0
+     waits <- newMVar []
      flag <- newFlag
-     runReaderT m (flag,round)
+     runReaderT m (Env flag round waits)
   
 unsafeRunRoundM :: Flag -> RoundM s a -> IO a
 unsafeRunRoundM flag (RoundM m) = 
   do round <- newMVar 0
-     runReaderT m (flag,round)
+     waits <- newMVar []
+     runReaderT m (Env flag round waits)
 
 
 

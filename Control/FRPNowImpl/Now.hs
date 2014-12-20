@@ -59,12 +59,9 @@ tryPlans :: Now s ()
 tryPlans = Now $ 
   do plmv <- ask
      pl <- liftIO $ swapMVar plmv []
-     mv <- liftIO $ sequence $ replicate (length pl) newEmptyMVar
-     mapM_ (parTryPlan plmv ) (zip pl mv)
-     liftIO $ mapM_ takeMVar mv
-  where parTryPlan plmv (p,mv) = lift $ forkASync $ 
-            do runReaderT (runNow' (tryPlan p)) plmv 
-               liftIO $ putMVar mv ()
+     mapM_ (parTryPlan plmv) pl
+  where parTryPlan plmv p = 
+         lift $ forkASync $ runReaderT (runNow' (tryPlan p)) plmv 
 
 runFRPLocal :: (forall s. Now s (Event s a)) -> IO a
 runFRPLocal m = runRoundM $ 
