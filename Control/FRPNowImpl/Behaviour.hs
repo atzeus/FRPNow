@@ -8,21 +8,38 @@ import System.IO.Unsafe
 import Control.FRPNowImpl.Event
 import Control.FRPNowImpl.Now
 import Data.Sequence
+import Debug.Trace
 import Data.Foldable (toList)
 import Data.Maybe
 
 infixr 3 :-> 
-data BHT s a = (:->) { headB :: Now s a , tailB :: Event s (Behaviour s a) }
-            | SameAs (Behaviour s a) (BHT s a) 
-            | Const a
+data BState s a = (:->) { headB :: Now s a , tailB :: Event s (Behaviour s a) }
+                | SameAs (Behaviour s a)
+                | Const a
+
+again :: BState s a -> Behaviour s a
+again x = B $ 
+  case x of
+   h :-> t -> evNow t >>= \case 
+              Just b -> getHT b
+              Nothing -> return x
+   SameAs _ -> return x
+   Const _  -> return x
+
+getHTFull :: Behaviour s a -> Now s (BState s a)
+getHTFull b = 
+  getHT b >>= \case
+          Const x -> return (pure x :-> never)
+          SameAs b' -> getHTFull b'
+          h :-> t  -> return (h :-> t)
+
+curIO :: Behaviour s a -> Now s a
+curIO b = do h :-> t <- getHTFull b
+             h
    
 
+newtype Behaviour s a = B { getHT :: Now s (BState s a) }
 
-newtype Behaviour s a = B { getHT :: Now s (BHT s a) }
-
-              
-curIO :: Behaviour s a -> Now s a
-curIO b = getHT b >>= headB . normHTFull 
 
 instance Monad (Behaviour s) where
   return a = B $ return (Const a)
@@ -31,51 +48,58 @@ instance Monad (Behaviour s) where
 
 bind :: Behaviour s a -> (a -> Behaviour s b) -> Behaviour s b
 bind m f = B $
-   do v <- noSameAs . normalizeBNF <$> getHT m
+   do v <- getHT m
       case v of
+       SameAs m' -> getHT (bind m' f)
        h :-> t -> do x <- h
                      let t' = (`bind` f) <$> t
                      getHT (f x `switch'` t')
-       Const x -> let v = f x 
-                  in SameAs v <$> getHT v
+       Const x -> return (SameAs (f x))
 
 switch b e =  memo $  switch' b e
 
 switch' ::  Behaviour s a -> Event s (Behaviour s a) -> Behaviour s a
 switch' b e = B  $ 
   evNow e >>= \case 
-    Just a  -> SameAs a <$> getHT a
-    Nothing -> normHT <$> getHT b >>= \case
+    Just a  -> return (SameAs a)
+    Nothing -> getHT b >>= \case
+        SameAs b' -> getHT (switch' b' e)
         h :-> t -> do let t' = (`switch'` e) <$> t
                       ts <- t' `firstObs` e
                       return $ h :-> ts
         Const x -> return (pure x :-> e)
 
-whenJust b =  whenJust' (unsafePerformIO $ newMVar Nothing) b
-{-# NOINLINE whenJust #-}    
+
+
+memo :: Behaviour s a -> Behaviour s a
+memo b = B $ runMemo  where
+  mvar = unsafePerformIO $ newMVar b
+  {-# NOINLINE mvar #-}  
+  runMemo = 
+    do b <- syncIO $ takeMVar mvar 
+       v <- getHT b
+       syncIO $ putMVar mvar (again v)
+       return v
+{-# NOINLINE memo #-}  
+
+whenJust b = whenJust' b
 
 
 
 
-whenJust' :: MVar (Maybe (Event s a)) -> Behaviour s (Maybe a) -> Behaviour s (Event s a)
-whenJust' m b = B $ 
-  normHT <$> getHT b >>= \case
-      Const x -> return $ Const (maybe never return x)
-      h :-> t -> do let tw = whenJust' m <$> t
-                    let h' = head m h tw
-                    return (h' :-> tw)
-  where head m h tw =
-         do v <- syncIO $ readMVar m
-            x <- case v of
-             Nothing -> getCur h tw
-             Just e  -> evNow e >>= \case
-                         Just _ -> getCur h tw
-                         Nothing -> return e
-            syncIO $ swapMVar m (Just x)
-            return x
-        getCur h tw = h >>= \case 
-         Just x  -> return $ pure x
-         Nothing -> join <$> planIO (curIO  <$> tw)
+whenJust' :: Behaviour s (Maybe a) -> Behaviour s (Event s a)
+whenJust' b = B $ 
+  getHT b >>= \case
+      SameAs b' -> getHT (whenJust' b')
+      Const x   -> return $ Const (maybe never return x)
+      h :-> t   -> do let tw = whenJust' <$> t
+                      return (getEv :-> tw)
+  where getEv = 
+            do h :-> t <- getHTFull b
+               v <- h
+               case v of
+                 Just a -> return (pure a)
+                 Nothing  -> join <$> planIO (getEv  <$ t)
 
 {-
 seqS :: Behaviour x -> Behaviour a -> Behaviour a
@@ -90,63 +114,13 @@ seqS l r = B $
 
 
 
-getNowAgain :: BHT s a -> Now s (BHT s a)
-getNowAgain (h :-> t) = evNow t >>= \case
-      Just x  -> getHT x >>= getNowAgain
-      Nothing -> return (h :-> t)
-getNowAgain (SameAs _ b) = getNowAgain b
-getNowAgain (Const x)    = return $ Const x
 
 
 
-constMemo :: Now s a -> Now s (Now s a)
-constMemo n = syncIO $ runMemo <$> newMVar (Left n) where
-  runMemo m = do v <- syncIO $ takeMVar m
-                 v' <- case v of
-                         Left x  -> x 
-                         Right x -> return x
-                 syncIO $ putMVar m (Right v')
-                 return v'
-
-
-data MemoInfo s a = Uninit (Behaviour s a) | Init (BHT s a) | SameAsS (Behaviour s a) | ConstS a
-
-memo :: Behaviour s a -> Behaviour s a
-memo b = B $ unsafePerformIO $ runMemo <$> newMVar (Uninit b) where
-  runMemo m = 
-    do  v <- syncIO $ takeMVar m 
-        res <- case v of
-                Uninit b  -> getHT b 
-                Init m    -> getNowAgain m
-                SameAsS b -> SameAs b <$> getHT b
-                ConstS x  -> return (Const x)
-        let (newState, res') = case normalizeBNF res of
-                                SameAs n nf -> (SameAsS n, SameAs n nf)
-                                Const x     -> (ConstS x, SameAs (return x) (Const x))
-                                nf          -> (Init nf, nf)
-        syncIO $ putMVar m newState
-        return res'
-{-# NOINLINE memo #-}    
-
-   
-noSameAs (SameAs _ (SameAs _ _)) = error "Double same as!"
-noSameAs (SameAs _ nf) = nf
-noSameAs n             = n
-
-normHTFull nf = case noSameAs (normalizeBNF nf) of
-             Const x -> return x :-> never
-             x       -> x
-
-normHT nf = noSameAs (normalizeBNF nf)
-
-normalizeBNF (SameAs _ (SameAs n nf)) =  normalizeBNF $ SameAs n nf
-normalizeBNF (SameAs _ (Const x))     =  Const x
-normalizeBNF nf              = nf
-
+  
 instance Functor (Behaviour s) where
   fmap = liftM
 
 instance Applicative (Behaviour s) where
   pure = return
   (<*>) = ap
-

@@ -59,6 +59,7 @@ tryPlans :: Now s ()
 tryPlans = Now $ 
   do plmv <- ask
      pl <- liftIO $ swapMVar plmv []
+     liftIO $ putStrLn (show $ length pl)
      mapM_ (parTryPlan plmv) pl
   where parTryPlan plmv p = 
          lift $ forkASync $ runReaderT (runNow' (tryPlan p)) plmv 
