@@ -44,7 +44,7 @@ boxes mousePos buttons = parList $ box `sampleOn` clicks MLeft
         let toColor True  = green
             toColor False = red 
         let color = toColor <$> mo
-        (Box  <$> r <*> color)  `until` clickOn r MRight
+        (Box  <$> r <*> color)  `until`  clickOn r MRight
 
 
   dragRect :: Rect -> Behaviour (Behaviour Rect)  

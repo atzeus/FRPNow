@@ -11,7 +11,8 @@ import Data.Sequence
 import Debug.Trace
 import Data.Foldable (toList)
 import Data.Maybe
-
+import Control.FRPNowImpl.TypeAlignStableWeakHashtable
+import Prelude hiding (lookup)
 infixr 3 :-> 
 data BState s a = (:->) { headB :: Now s a , tailB :: Event s (Behaviour s a) }
                 | SameAs (Behaviour s a)
@@ -93,13 +94,19 @@ whenJust' b = B $
       SameAs b' -> getHT (whenJust' b')
       Const x   -> return $ Const (maybe never return x)
       h :-> t   -> do let tw = whenJust' <$> t
-                      return (getEv :-> tw)
-  where getEv = 
-            do h :-> t <- getHTFull b
-               v <- h
+                      return (getJust b :-> tw)
+
+getJust b = 
+     do v <- getHT b
+        case v of
+          Const x -> return $ maybe never return x
+          SameAs b' -> getJust b'
+          h :-> t -> 
+            do v <- h
                case v of
                  Just a -> return (pure a)
-                 Nothing  -> join <$> planIO (getEv  <$ t)
+                 Nothing  -> join <$> planIOWeak (getJust <$> t)
+
 
 {-
 seqS :: Behaviour x -> Behaviour a -> Behaviour a

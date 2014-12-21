@@ -1,5 +1,5 @@
 {-# LANGUAGE ScopedTypeVariables,TypeSynonymInstances,Rank2Types,TupleSections,LambdaCase,ExistentialQuantification,GADTs,GeneralizedNewtypeDeriving #-}
-module Control.FRPNowImpl.Now(Now, syncIO, asyncIO, evNow, firstObs, planIO, runFRPLocal, runFRP, Global) where
+module Control.FRPNowImpl.Now(Now, syncIO, asyncIO, evNow, firstObs, planIO, planIOWeak, runFRPLocal, runFRP, Global) where
 
 import Control.Applicative
 import Control.Concurrent
@@ -13,8 +13,25 @@ import Control.FRPNowImpl.Event
 import Control.FRPNowImpl.IVar
 import Control.FRPNowImpl.ConcFlag
 import System.IO.Unsafe
+import System.Mem.Weak
 
-data Plan s = forall a. Plan (Event s (Now s a))  (IVar a)
+data Ref a = W (Weak a)
+           | S a
+
+makeWeakRef :: a -> Now s (Ref a)
+makeWeakRef a = W <$> syncIO (mkWeakPtr a Nothing)
+
+makeStrongRef :: a -> Now s (Ref a)
+makeStrongRef a = return (S a)
+
+isWeak (W _) = True
+isWeak _     = False
+
+deRef :: Ref a -> Now s (Maybe a)
+deRef (S a) = return (Just a)
+deRef (W a) = syncIO $ deRefWeak a
+
+data Plan s = forall a. Plan (Event s (Now s a))  (Ref (IVar a))
 
 newtype Now s a = Now { runNow' ::  ReaderT (MVar [Plan s]) (ASync s) a } deriving (Functor, Applicative, Monad)
 
@@ -38,28 +55,41 @@ firstObs l r =
        (_, _     ) -> first l r
 
 planIO :: Event s (Now s a) -> Now s (Event s a)
-planIO e = evNow e >>= \case
+planIO = planIO' makeStrongRef
+planIOWeak :: Event s (Now s a) -> Now s (Event s a)
+planIOWeak = planIO' makeWeakRef
+
+planIO' :: (forall a. a -> Now s (Ref a)) -> Event s (Now s a) -> Now s (Event s a)
+planIO' f e = evNow e >>= \case
             Just n  -> pure <$> n
             Nothing -> do iv <- syncIO $ newIVar
-                          addPlan (Plan e iv)
+                          ivr <- f iv
+                          addPlan (Plan e ivr)
                           return (ivarVal iv <$ e)
- 
 addPlan :: Plan s -> Now s ()
 addPlan p = Now $
  do plmv <- ask
     pl <- liftIO $ takeMVar plmv
     liftIO $ putMVar plmv (p : pl)
 
+
+
 tryPlan :: Plan s -> Now s ()
-tryPlan (Plan e iv) = evNow e >>= \case
+tryPlan (Plan e ivr) = 
+    deRef ivr >>= \case
+       Just iv -> evNow e >>= \case
             Just n  -> n >>= syncIO . writeIVar iv
-            Nothing -> addPlan (Plan e iv)
+            Nothing -> addPlan (Plan e ivr)
+       Nothing -> trace "GC!" $ return ()
+
+
 
 tryPlans :: Now s ()
 tryPlans = Now $ 
   do plmv <- ask
      pl <- liftIO $ swapMVar plmv []
-     liftIO $ putStrLn (show $ length pl)
+     let n = length $ filter (\(Plan _ r) -> isWeak r) pl
+     liftIO $ putStrLn (show $ (n, length pl - n))
      mapM_ (parTryPlan plmv) pl
   where parTryPlan plmv p = 
          lift $ forkASync $ runReaderT (runNow' (tryPlan p)) plmv 
