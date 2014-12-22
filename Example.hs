@@ -39,18 +39,20 @@ boxes mousePos buttons = parList $ box `sampleOn` clicks MLeft
         let defineBox = Box <$> defineRect <*> pure red
         defineBox `until` release MLeft
         p2 <- cur mousePos
+        --let r = pure $ rect p1 p2
         r  <- cur $ dragRect (rect p1 p2)
         let mo = mouseOver r
         let toColor True  = green
             toColor False = red 
         let color = toColor <$> mo
+        
         (Box  <$> r <*> color)  `until`  clickOn r MRight
 
 
   dragRect :: Rect -> Behaviour (Behaviour Rect)  
   dragRect r =  behaviour <$> open (loop r) where
     loop r = do pure r `until` clickOn (pure r) MMiddle
-                offset <- cur mouseOffset
+                offset <- trace "jada" $ cur mouseOffset
                 let mr = moveRect r <$> offset
                 mr `until` release MMiddle
                 cur mr >>= loop

@@ -1,4 +1,4 @@
-module Control.FRPNowImpl.ConcFlag where
+module Control.Concurrent.ConcFlag where
 
 import Control.Concurrent.MVar
 

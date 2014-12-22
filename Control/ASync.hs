@@ -1,5 +1,5 @@
 {-# LANGUAGE Rank2Types,GeneralizedNewtypeDeriving #-}
-module Control.FRPNowImpl.ASync(Timestamp, RoundM, ASync,TimeIVar, prevTimestamp, async, waitEndRound, prevRound, observeAt, forkASync, runASync,runRoundM,unsafeRunRoundM) where
+module Control.ASync(Timestamp, RoundM, ASync,TimeIVar, prevTimestamp, async, waitEndRound, prevRound, observeAt, forkASync, runASync,runRoundM,unsafeRunRoundM) where
 
 import Control.Monad.IO.Class
 import Control.Monad.Reader
@@ -7,7 +7,7 @@ import Control.Applicative
 import Control.Concurrent
 import Control.Concurrent.MVar
 import System.IO.Unsafe
-import Control.FRPNowImpl.ConcFlag
+import Control.Concurrent.ConcFlag
 
 data Timestamp s = Timestamp Integer deriving (Ord,Eq)
 

@@ -3,7 +3,7 @@ module Control.FRPNowImpl.Event(Time(..),Event, makeEvent,never, first,runEv) wh
 
 import Control.Applicative
 import Control.Monad
-import Control.FRPNowImpl.ASync
+import Control.ASync
 import Control.Concurrent.MVar
 import System.IO.Unsafe
 

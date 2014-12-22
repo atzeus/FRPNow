@@ -1,5 +1,5 @@
 {-# LANGUAGE ScopedTypeVariables,TypeSynonymInstances,Rank2Types,TupleSections,LambdaCase,ExistentialQuantification,GADTs,GeneralizedNewtypeDeriving #-}
-module Control.FRPNowImpl.Now(Now, syncIO, asyncIO, evNow, firstObs, planIO, planIOWeak, runFRPLocal, runFRP, Global) where
+module Control.FRPNowImpl.Now(Now, syncIO, asyncIO, evNow, firstObs, planIO, planIOWeak, planIOWeakKey, runFRPLocal, runFRP, Global) where
 
 import Control.Applicative
 import Control.Concurrent
@@ -8,28 +8,14 @@ import Control.Monad
 import Control.Monad.Reader
 import Debug.Trace
 import Data.Maybe
-import Control.FRPNowImpl.ASync
+import Control.ASync
 import Control.FRPNowImpl.Event
-import Control.FRPNowImpl.IVar
-import Control.FRPNowImpl.ConcFlag
+import Data.IVar
+import Control.Concurrent.ConcFlag
 import System.IO.Unsafe
-import System.Mem.Weak
+import Data.Ref
 
-data Ref a = W (Weak a)
-           | S a
 
-makeWeakRef :: a -> Now s (Ref a)
-makeWeakRef a = W <$> syncIO (mkWeakPtr a Nothing)
-
-makeStrongRef :: a -> Now s (Ref a)
-makeStrongRef a = return (S a)
-
-isWeak (W _) = True
-isWeak _     = False
-
-deRef :: Ref a -> Now s (Maybe a)
-deRef (S a) = return (Just a)
-deRef (W a) = syncIO $ deRefWeak a
 
 data Plan s = forall a. Plan (Event s (Now s a))  (Ref (IVar a))
 
@@ -56,16 +42,29 @@ firstObs l r =
 
 planIO :: Event s (Now s a) -> Now s (Event s a)
 planIO = planIO' makeStrongRef
+
+
+
 planIOWeak :: Event s (Now s a) -> Now s (Event s a)
 planIOWeak = planIO' makeWeakRef
 
-planIO' :: (forall a. a -> Now s (Ref a)) -> Event s (Now s a) -> Now s (Event s a)
+planIO' :: (forall a. a -> IO (Ref a)) -> Event s (Now s a) -> Now s (Event s a)
 planIO' f e = evNow e >>= \case
             Just n  -> pure <$> n
             Nothing -> do iv <- syncIO $ newIVar
-                          ivr <- f iv
+                          ivr <- syncIO $ f iv
                           addPlan (Plan e ivr)
                           return (ivarVal iv <$ e)
+
+-- does the plan if the key is still alive
+planIOWeakKey :: k -> Event s (Now s a) -> Now s (Event s a)
+planIOWeakKey k e = evNow e >>= \case
+            Just n  -> pure <$> n
+            Nothing -> do iv <- syncIO $ newIVar
+                          ivr <- syncIO $ makeWeakRefKey k iv
+                          addPlan (Plan e ivr)
+                          return (ivarVal iv <$ e)
+
 addPlan :: Plan s -> Now s ()
 addPlan p = Now $
  do plmv <- ask
@@ -76,11 +75,11 @@ addPlan p = Now $
 
 tryPlan :: Plan s -> Now s ()
 tryPlan (Plan e ivr) = 
-    deRef ivr >>= \case
+    syncIO (deRef ivr) >>= \case
        Just iv -> evNow e >>= \case
             Just n  -> n >>= syncIO . writeIVar iv
             Nothing -> addPlan (Plan e ivr)
-       Nothing -> trace "GC!" $ return ()
+       Nothing -> return ()
 
 
 
@@ -89,7 +88,7 @@ tryPlans = Now $
   do plmv <- ask
      pl <- liftIO $ swapMVar plmv []
      let n = length $ filter (\(Plan _ r) -> isWeak r) pl
-     liftIO $ putStrLn (show $ (n, length pl - n))
+     --liftIO $ putStrLn (show $ (n, length pl - n))
      mapM_ (parTryPlan plmv) pl
   where parTryPlan plmv p = 
          lift $ forkASync $ runReaderT (runNow' (tryPlan p)) plmv 

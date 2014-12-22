@@ -1,5 +1,5 @@
 {-# LANGUAGE LambdaCase #-}
-module Control.FRPNowImpl.IVar(IVar,newIVar, writeIVar, ivarVal) where
+module Data.IVar(IVar,newIVar, writeIVar, ivarVal) where
 import Control.Concurrent.MVar
 import Control.Applicative
 import System.IO.Unsafe
