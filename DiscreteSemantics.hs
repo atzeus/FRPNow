@@ -14,8 +14,10 @@ instance Monad Behaviour where
   return x        = x :-> never
   (h :-> t) >>= f = f h `switch` fmap (>>= f) t
 
+{-
 instance MonadFix Behaviour where
   mfix f = fix (f . headB)
+-}
 
 switch :: Behaviour a -> Event (Behaviour a) -> Behaviour a
 switch (h :-> t) e = h :-> (either (`switch` e) id) <$> (first t e) 
@@ -25,7 +27,7 @@ whenJust (h :-> t) =
   let t' = fmap whenJust t
   in case h of
    Just x  -> pure x :-> t'
-   Nothing -> (t' >>= headB) :-> (t' >>= tailB)
+   Nothing -> (t' >>= headB) :-> t'
 
 seqS :: Behaviour x -> Behaviour a -> Behaviour a
 seqS  s@(sh :-> st) b@(h :-> t) = 
