@@ -14,12 +14,14 @@ import Data.IVar
 import Control.Concurrent.ConcFlag
 import System.IO.Unsafe
 import Data.Ref
+import System.Mem.Weak
+import System.Mem
 
 
 
-data Plan s = forall a. Plan (Event s (Now s a))  (Ref (IVar a))
+data Plan s = forall a. Plan (Event s (Now s a))  (IVar a)
 
-newtype Now s a = Now { runNow' ::  ReaderT (MVar [Plan s]) (ASync s) a } deriving (Functor, Applicative, Monad)
+newtype Now s a = Now { runNow' ::  ReaderT (MVar [Ref (Plan s)]) (ASync s) a } deriving (Functor, Applicative, Monad)
 
 syncIO :: IO a -> Now s a
 syncIO m = Now $ liftIO m
@@ -41,31 +43,24 @@ firstObs l r =
        (_, _     ) -> first l r
 
 planIO :: Event s (Now s a) -> Now s (Event s a)
-planIO = planIO' makeStrongRef
-
-
+planIO  = planIO' (\_ y -> makeStrongRef y)
 
 planIOWeak :: Event s (Now s a) -> Now s (Event s a)
-planIOWeak = planIO' makeWeakRef
+planIOWeak  = planIO' makeWeakRefKey
 
-planIO' :: (forall a. a -> IO (Ref a)) -> Event s (Now s a) -> Now s (Event s a)
-planIO' f e = evNow e >>= \case
-            Just n  -> pure <$> n
-            Nothing -> do iv <- syncIO $ newIVar
-                          ivr <- syncIO $ f iv
-                          addPlan (Plan e ivr)
-                          return (ivarVal iv <$ e)
-
--- does the plan if the key is still alive
 planIOWeakKey :: k -> Event s (Now s a) -> Now s (Event s a)
-planIOWeakKey k e = evNow e >>= \case
+planIOWeakKey k =  planIO' (\_ y -> makeWeakRefKey k y)
+
+planIO' makeRef e = evNow e >>= \case
             Just n  -> pure <$> n
             Nothing -> do iv <- syncIO $ newIVar
-                          ivr <- syncIO $ makeWeakRefKey k iv
-                          addPlan (Plan e ivr)
-                          return (ivarVal iv <$ e)
+                          let evRes = ivarVal iv <$ e
+                          p <- syncIO $ makeRef iv (Plan e iv)
+                          addPlan p
+                          return evRes
 
-addPlan :: Plan s -> Now s ()
+
+addPlan :: Ref (Plan s) -> Now s ()
 addPlan p = Now $
  do plmv <- ask
     pl <- liftIO $ takeMVar plmv
@@ -73,12 +68,12 @@ addPlan p = Now $
 
 
 
-tryPlan :: Plan s -> Now s ()
-tryPlan (Plan e ivr) = 
-    syncIO (deRef ivr) >>= \case
-       Just iv -> evNow e >>= \case
+tryPlan :: Ref (Plan s) -> Now s ()
+tryPlan p = 
+    syncIO (deRef p) >>= \case
+       Just (Plan e iv) -> evNow e >>= \case
             Just n  -> n >>= syncIO . writeIVar iv
-            Nothing -> addPlan (Plan e ivr)
+            Nothing -> addPlan p
        Nothing -> return ()
 
 
@@ -87,8 +82,8 @@ tryPlans :: Now s ()
 tryPlans = Now $ 
   do plmv <- ask
      pl <- liftIO $ swapMVar plmv []
-     let n = length $ filter (\(Plan _ r) -> isWeak r) pl
-     --liftIO $ putStrLn (show $ (n, length pl - n))
+     -- let n = length $ filter isWeak pl
+     -- liftIO $ putStrLn (show $ (n,length pl - n))
      mapM_ (parTryPlan plmv) pl
   where parTryPlan plmv p = 
          lift $ forkASync $ runReaderT (runNow' (tryPlan p)) plmv 
@@ -123,7 +118,7 @@ runInits inits =
              let setEm a = syncIO (putMVar m a)
              planIO (setEm <$> e)
 
-globalLoop :: MVar [Plan Global] -> MVar [FRPInit] -> RoundM Global ()
+globalLoop :: MVar [Ref (Plan Global)] -> MVar [FRPInit] -> RoundM Global ()
 globalLoop mv init = forever $ 
    do waitEndRound 
       runNow mv tryPlans

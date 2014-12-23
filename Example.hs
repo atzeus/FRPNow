@@ -52,7 +52,7 @@ boxes mousePos buttons = parList $ box `sampleOn` clicks MLeft
   dragRect :: Rect -> Behaviour (Behaviour Rect)  
   dragRect r =  behaviour <$> open (loop r) where
     loop r = do pure r `until` clickOn (pure r) MMiddle
-                offset <- trace "jada" $ cur mouseOffset
+                offset <- cur mouseOffset
                 let mr = moveRect r <$> offset
                 mr `until` release MMiddle
                 cur mr >>= loop

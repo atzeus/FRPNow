@@ -31,6 +31,7 @@ testb =
      b <- count1 500000 :: Now (Behaviour Int)
      -- b2 <- count1 700000 :: Now (Behaviour Int)
      v <- cur $ whenJust ( (\x -> if x > 10 then Just 1 else Nothing) <$> b)
+     e <- planIOWeak ((syncIO (putStrLn "Bla") >> return 10) <$ v)
 {-
      let b' = b `switch` (fmap return v)
      let f =  (+) <$> b <*> b'
@@ -38,8 +39,8 @@ testb =
 
      e' <- cur $ bla e
   -}   
-     showChanges $ (,) <$> b <*> getNow v
-     return  (never :: Event Int)
+--     showChanges $ (,) <$> b <*> getNow v
+     return  v -- (never :: Event Int)
      {-
      let evs = b `sampleOn` (repeatEv $ change b)
      let isEven x = x `mod` 2 == 0

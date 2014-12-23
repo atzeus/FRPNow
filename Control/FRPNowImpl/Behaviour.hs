@@ -1,5 +1,5 @@
 {-# LANGUAGE RecursiveDo, ScopedTypeVariables, LambdaCase #-}
-module Control.FRPNowImpl.Behaviour(Behaviour,curIO, switch, whenJust, seqb, seqAlways) where
+module Control.FRPNowImpl.Behaviour(Behaviour,curIO, switch, whenJust, seqb) where
 import Control.Applicative hiding (empty,Const)
 import Control.Monad
 import Control.Monad.Fix
@@ -95,7 +95,7 @@ seqb' l r = B $ getHT l >>= \case
           SameAs r' -> getHT (seqb' l r')
           hr :-> tr -> return $ (hl >> hr) :-> ((l `seqb`) <$> tr)
 
-      
+
 seqAlways :: Behaviour s a -> Now s ()
 seqAlways b = 
   getHT b >>= \case
