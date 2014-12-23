@@ -74,6 +74,7 @@ observeAt (TimeIVar m) t =
   case unsafePerformIO $ readMVar m of
       Just (t',a) | t' <= t -> Just (t',a)
       _               -> Nothing
+{-# NOINLINE observeAt #-}  
 
 runRoundM :: (forall s. RoundM s a) -> IO a
 runRoundM (RoundM m) = 
