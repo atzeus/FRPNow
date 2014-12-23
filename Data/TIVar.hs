@@ -1,9 +1,6 @@
 {-# LANGUAGE LambdaCase, Rank2Types  #-}
 module Data.TIVar where
 
--- Hoi Koen!
--- new, simpler version of TIVars
--- see Control.ASync for version as described in draft
 
 import Control.Concurrent.MVar
 import Control.Applicative
