@@ -8,30 +8,44 @@ import Control.Monad
 import Control.Monad.Reader
 import Debug.Trace
 import Data.Maybe
-import Control.ASync
 import Control.FRPNowImpl.Event
+import Data.TIVar
 import Data.IVar
+import Control.Concurrent
 import Control.Concurrent.ConcFlag
 import System.IO.Unsafe
 import Data.Ref
-import System.Mem.Weak
-import System.Mem
 
-
+-- New, simpler implementation of Now...
 
 data Plan s = forall a. Plan (Event s (Now s a))  (IVar a)
 
-newtype Now s a = Now { runNow' ::  ReaderT (MVar [Ref (Plan s)]) (ASync s) a } deriving (Functor, Applicative, Monad)
+data Env s = Env {
+  clock :: Clock s,
+  plans :: MVar [Ref (Plan s)],
+  flag  :: Flag 
+ }
+
+newtype Now s a = Now { runNow' ::  ReaderT (Env s) IO a } deriving (Functor, Applicative, Monad)
+
+getEnv = Now ask
 
 syncIO :: IO a -> Now s a
 syncIO m = Now $ liftIO m
 
 asyncIO :: IO a -> Now s (Event s a)
-asyncIO m = Now $ makeEvent . observeAt <$> lift (async m)
+asyncIO m =  
+  do env <- getEnv
+     ti <- syncIO $ newTIVar (clock env)
+     syncIO $ forkIO $ m >>= writeTIVar ti >> signal (flag env)
+     return $ makeEvent (observeAt ti)
 
 
 evNow :: Event s a -> Now s (Maybe a)
-evNow e = fmap snd . runEv e . Time <$> Now (lift $ prevRound)
+evNow e = 
+   do env <- getEnv
+      t <- syncIO $ Time <$> curRound (clock env)
+      return (fmap snd $ runEv e t)
 
 firstObs :: Event s a -> Event s a -> Now s (Event s a)
 firstObs l r = 
@@ -61,11 +75,10 @@ planIO' makeRef e = evNow e >>= \case
 
 
 addPlan :: Ref (Plan s) -> Now s ()
-addPlan p = Now $
- do plmv <- ask
-    pl <- liftIO $ takeMVar plmv
-    liftIO $ putMVar plmv (p : pl)
-
+addPlan p = 
+ do env <- getEnv
+    pl <- syncIO $ takeMVar (plans env)
+    syncIO $ putMVar (plans env) (p : pl)
 
 
 tryPlan :: Ref (Plan s) -> Now s ()
@@ -76,34 +89,37 @@ tryPlan p =
             Nothing -> addPlan p
        Nothing -> return ()
 
-
-
 tryPlans :: Now s ()
-tryPlans = Now $ 
-  do plmv <- ask
-     pl <- liftIO $ swapMVar plmv []
-     -- let n = length $ filter isWeak pl
-     -- liftIO $ putStrLn (show $ (n,length pl - n))
-     mapM_ (parTryPlan plmv) pl
-  where parTryPlan plmv p = 
-         lift $ forkASync $ runReaderT (runNow' (tryPlan p)) plmv 
+tryPlans = 
+  do env <- getEnv
+     pl <- syncIO $ swapMVar (plans env) []
+     mvars <- syncIO $ sequence (replicate (length pl) newEmptyMVar)
+     mapM_ parTryPlan (zip pl mvars)
+     syncIO $ mapM_ takeMVar mvars
+  where parTryPlan (p,mv) = 
+         do env <- getEnv
+            syncIO $ forkIO $ runNow env (tryPlan p)  >> putMVar mv ()
 
 runFRPLocal :: (forall s. Now s (Event s a)) -> IO a
-runFRPLocal m = runRoundM $ 
-     do mv <- runASync $ liftIO $ newMVar []
-        v <- runNow mv m
-        loop mv v where
-   loop mv v = 
-    runNow mv (evNow v) >>= \case
+runFRPLocal m = withClock $ \c -> 
+     do plans <- newMVar []
+        flag <- newFlag
+        let env = Env c plans flag
+        v <- runNow env m
+        loop env v where
+   loop env v = 
+    runNow env (evNow v) >>= \case
          Just a -> return a
          Nothing -> 
-           do waitEndRound 
-              runNow mv tryPlans
-              loop mv v
+           do waitForSignal (flag env)
+              endRound (clock env) 
+              runNow env tryPlans
+              loop env v
 
-runNow mv n = runASync (runReaderT (runNow' n) mv)  
+runNow env m = runReaderT (runNow' m) env
 
 -- Global stuff
+
 
 data Global 
 
@@ -118,19 +134,21 @@ runInits inits =
              let setEm a = syncIO (putMVar m a)
              planIO (setEm <$> e)
 
-globalLoop :: MVar [Ref (Plan Global)] -> MVar [FRPInit] -> RoundM Global ()
-globalLoop mv init = forever $ 
-   do waitEndRound 
-      runNow mv tryPlans
-      runNow mv (runInits init)
+globalLoop :: Env Global -> MVar [FRPInit] -> IO ()
+globalLoop env init = forever $ 
+   do waitForSignal (flag env)
+      endRound (clock env)  
+      runNow env tryPlans
+      runNow env (runInits init)
 
 
 global :: (Flag, MVar [FRPInit])
-global = unsafePerformIO $
+global = unsafePerformIO $ unsafeWithClock $ \c ->
     do flag <- newFlag
        init <- newMVar []
        plans <- newMVar []
-       forkIO $ unsafeRunRoundM flag (globalLoop plans init)
+       let env = Env c plans flag
+       forkIO $ globalLoop env init
        return (flag, init)
 {-# NOINLINE global #-}  
 

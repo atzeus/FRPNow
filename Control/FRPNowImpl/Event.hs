@@ -3,11 +3,11 @@ module Control.FRPNowImpl.Event(Time(..),Event, makeEvent,never, first,runEv) wh
 
 import Control.Applicative
 import Control.Monad
-import Control.ASync
+import Data.TIVar
 import Control.Concurrent.MVar
 import System.IO.Unsafe
 
-data Time s = MinBound | Time (Timestamp s) deriving (Ord,Eq)
+data Time s = MinBound | Time (Round s) deriving (Ord,Eq)
 
 data EvState s a = After (Time s) (Event s a) 
                  | Occurred (Time s) a
@@ -29,7 +29,7 @@ runEv e t = case runEv' e t of
               Occurred t a -> Just (t,a)
               After  _ _   -> Nothing
 
-makeEvent :: (Timestamp s -> Maybe (Timestamp s, a)) -> Event s a
+makeEvent :: (Round s -> Maybe (Round s, a)) -> Event s a
 makeEvent f = E $ \t -> 
   case t of
     MinBound -> After MinBound (makeEvent f)
@@ -72,7 +72,7 @@ first' l r = E $ \t ->
                 After dr l'     -> After (max dl dr) (first' l' r')
  where prev e t = case t of
          MinBound -> After MinBound e
-         Time t -> runEv' e (Time $ prevTimestamp t)
+         Time t -> runEv' e (Time $ prevRound t)
 
 memo :: Event s a -> Event s a
 memo e = E $ \t -> unsafePerformIO $ runMemo t where

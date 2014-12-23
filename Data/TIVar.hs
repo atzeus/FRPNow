@@ -15,6 +15,9 @@ newtype TIVar s a = TIVar (MVar (Either (Clock s) (Round s, a)))
 newtype Clock s = Clock (MVar Integer)
 
 
+prevRound :: Round s -> Round s 
+prevRound (Round i) = Round (i - 1)
+
 newTIVar :: Clock s -> IO (TIVar s a)
 newTIVar c = TIVar <$> newMVar (Left c)
 
@@ -43,4 +46,7 @@ observeAt (TIVar m) t =
 
 withClock :: (forall s. Clock s -> IO a) -> IO a
 withClock m = (Clock <$> newMVar 0) >>= m
+
+unsafeWithClock :: (Clock s -> IO a)  -> IO a
+unsafeWithClock m = (Clock <$> newMVar 0) >>= m
 
