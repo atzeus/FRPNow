@@ -34,8 +34,9 @@ endRound (Clock c) = do i <- takeMVar c
                         putMVar c (i+1)
 
 observeAt :: TIVar s a -> Round s -> Maybe (Round s,a)
-observeAt (TIVar m) t =
-  case unsafePerformIO $ readMVar m of
+observeAt (TIVar m) t = unsafePerformIO $ 
+  do v <- readMVar m 
+     return $ case v of
       Right (t',a) | t' <= t -> Just (t',a)
       _                      -> Nothing 
 {-# NOINLINE observeAt #-}     

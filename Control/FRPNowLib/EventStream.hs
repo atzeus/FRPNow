@@ -1,7 +1,7 @@
 {-# LANGUAGE DeriveFunctor,FlexibleInstances,ConstraintKinds,ViewPatterns,NoMonomorphismRestriction,MultiParamTypeClasses ,FlexibleContexts,TypeOperators, LambdaCase, ScopedTypeVariables, Rank2Types, GADTs, TupleSections,GeneralizedNewtypeDeriving, UndecidableInstances #-}
 
 module Control.FRPNowLib.EventStream
-(EventStream, next, nextSim, emptyEs, repeatEv, merge, switchEs, singletonEs, fmapB, filterJusts, foldB, fold, during, sampleOn, parList, scanlEv, foldr1Ev, foldrEv, foldrSwitch, EventStreamM, emit,runEventStreamM, printAll)
+(EventStream(..), next, nextSim, emptyEs, repeatEv, merge, switchEs, singletonEs, fmapB, filterJusts, foldB, fold, during, sampleOn, parList, scanlEv, foldr1Ev, foldrEv, foldrSwitch, EventStreamM, emit,runEventStreamM, printAll, repeatEvN)
   where
 
 import Control.FRPNowImpl.FRPNow
@@ -9,20 +9,30 @@ import Control.FRPNowLib.Lib
 import Data.Maybe
 import Control.Monad hiding (when)
 import Control.Applicative hiding (empty)
-import Data.Monoid
 import Control.Monad.Swap
 import Data.Sequence hiding (reverse,scanl)
-import Prelude hiding (until)
+import Prelude hiding (until,length)
 import Debug.Trace
 
 
 newtype EventStream a = Es { getEs :: Behaviour (Event [a]) }
+
+instance Functor EventStream where
+  fmap f (Es b) = Es $ (fmap f <$>) <$> b
 
 next :: EventStream a -> Behaviour (Event a)
 next e = fmap head <$> getEs e
 
 nextSim :: EventStream a -> Behaviour (Event [a]) 
 nextSim e = getEs e
+
+repeatEvN :: Now (Event [a]) -> Now (EventStream a)
+repeatEvN en = Es <$> loop where
+  loop = do e <-  en
+            e' <- planIO (loop <$ e)
+            return (pure e `switch` e')
+
+
 
 repeatEv :: Behaviour (Event a) -> EventStream a
 repeatEv b = Es $ loop where
@@ -58,27 +68,29 @@ singletonEs e = Es $ pure (fmap (\x -> [x]) e) `switch` fmap (const (getEs empty
 
 
 fmapB :: Behaviour (a -> b) -> EventStream a -> EventStream b
-fmapB f es = loop where
- loop = Es $ 
+fmapB f es = Es $ loop where
+ loop =  
    do e  <- getEs es
       e' <- plan (fmap nxt e)
-      let again = getEs loop
-      pure e' `switch` fmap (const again) e'
+      pure e' `switch` (loop <$ e')
  nxt l = do fv <- f ; return (fmap fv l)
 
-instance Functor EventStream where
-  fmap f = fmapB (pure f)
+
+nextJusts :: EventStream (Maybe a) -> Behaviour (Event [a])
+nextJusts es = loop where
+  loop = 
+    do e <- getEs es
+       ev <- join <$> plan (fmap nxt e)
+       return ev
+  nxt l = case catMaybes l of
+              [] -> loop
+              l  -> return (return l)
 
 filterJusts :: EventStream (Maybe a) -> EventStream a
-filterJusts es = loop where
- loop = Es $
-  do e <- getEs es
-     ev <- join <$> plan (fmap nxt e)
-     let again = getEs loop
-     pure ev `switch` fmap (const again) ev
- nxt l = case catMaybes l of
-            [] -> getEs loop
-            l  -> return (return l)
+filterJusts es = Es loop where
+  loop =  do e <- nextJusts es
+             pure e `switch` (loop <$ e)
+
 
 filterMapB :: Behaviour (a -> Maybe b) -> EventStream a -> EventStream b
 filterMapB f e = filterJusts $ fmapB f e
@@ -142,7 +154,7 @@ toView e = case viewl e of
      EmptyL -> return End
      h :< t -> h >>= nxt t
   where nxt t End = toView t
-        nxt r (h :| l) = return (h :| (l >< r))
+        nxt r (h :| l) = let q = l >< r in return (h :| q)
 
 append :: Evs x -> Evs x -> Evs x
 append = (><)
@@ -204,7 +216,7 @@ printAll evs = do e2 <- cur (nextSim evs)
   loop l = 
       do syncIO (mapM_ (putStrLn . show) l)
          e2 <- cur (nextSim evs)
-         plan (fmap loop e2)
+         plan (loop <$> e2)
          return ()            
 
 

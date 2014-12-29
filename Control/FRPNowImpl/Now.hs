@@ -30,6 +30,7 @@ newtype Now s a = Now { runNow' ::  ReaderT (Env s) IO a } deriving (Functor, Ap
 
 getEnv = Now ask
 
+
 syncIO :: IO a -> Now s a
 syncIO m = Now $ liftIO m
 
@@ -49,12 +50,13 @@ evNow e =
 
 firstObs :: Event s a -> Event s a -> Now s (Event s a)
 firstObs l r = 
-  do lv <- evNow l
-     rv <- evNow r 
-     return $ case (lv,rv) of
-       (_, Just r) -> pure r
-       (Just l, _) -> pure l
-       (_, _     ) -> first l r
+  do rv <- evNow r 
+     case rv of
+       Just r -> return (pure r)
+       Nothing -> do lv <- evNow l 
+                     return $ case lv of
+                      Just l -> pure l
+                      Nothing -> first l r
 
 planIO :: Event s (Now s a) -> Now s (Event s a)
 planIO  = planIO' (\_ y -> makeStrongRef y)
@@ -67,9 +69,9 @@ planIOWeakKey k =  planIO' (\_ y -> makeWeakRefKey k y)
 
 planIO' makeRef e = evNow e >>= \case
             Just n  -> pure <$> n
-            Nothing -> do iv <- syncIO $ newIVar
+            Nothing -> do iv@(IVar x) <- syncIO $ newIVar
                           let evRes = ivarVal iv <$ e
-                          p <- syncIO $ makeRef iv (Plan e iv)
+                          p <- syncIO $ makeRef x (Plan e iv)
                           addPlan p
                           return evRes
 
@@ -81,24 +83,35 @@ addPlan p =
     syncIO $ putMVar (plans env) (p : pl)
 
 
-tryPlan :: Ref (Plan s) -> Now s ()
-tryPlan p = 
-    syncIO (deRef p) >>= \case
-       Just (Plan e iv) -> evNow e >>= \case
-            Just n  -> n >>= syncIO . writeIVar iv
-            Nothing -> addPlan p
-       Nothing -> return ()
+tryPlan :: Plan s -> Ref (Plan s) -> Now s ()
+tryPlan p@(Plan e iv) r = 
+       evNow e >>= \case
+            Just n  -> do x <- n; syncIO (writeIVar iv x)
+            Nothing -> addPlan r
+
+makeStrongPlans :: [Ref (Plan s)] -> Now s [(Plan s, Ref (Plan s))]
+makeStrongPlans pl = catMaybes <$> mapM getEm pl where
+  getEm :: Ref (Plan s) -> Now s (Maybe (Plan s, Ref (Plan s)))
+  getEm p = do v <- syncIO (deRef p); return ((,p) <$> v)
 
 tryPlans :: Now s ()
 tryPlans = 
   do env <- getEnv
      pl <- syncIO $ swapMVar (plans env) []
-     mvars <- syncIO $ sequence (replicate (length pl) newEmptyMVar)
-     mapM_ parTryPlan (zip pl mvars)
+     pl' <- makeStrongPlans pl 
+     {- this prevents a super sneaky race condition where 
+        an ivar is considered dead because we are 
+        already blocking on it and hence the plan
+        that writes to it is garbage collected
+     -}
+     mvars <- syncIO $ sequence (replicate (length pl') newEmptyMVar)
+     syncIO $ putStrLn (show (length pl'))
+
+     mapM_ parTryPlan (zip pl' mvars)
      syncIO $ mapM_ takeMVar mvars
-  where parTryPlan (p,mv) = 
+  where parTryPlan ((p,r),mv) = 
          do env <- getEnv
-            syncIO $ forkIO $ runNow env (tryPlan p)  >> putMVar mv ()
+            syncIO $ forkIO $ runNow env (tryPlan p r)  >> putMVar mv ()
 
 runFRPLocal :: (forall s. Now s (Event s a)) -> IO a
 runFRPLocal m = withClock $ \c -> 

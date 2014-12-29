@@ -5,7 +5,7 @@ module Control.FRPNowLib.Lib where
 
 import Control.FRPNowImpl.FRPNow
 import Control.Applicative
-import Control.Monad hiding (when,until)
+import Control.Monad hiding (when)
 
 import Prelude hiding (until)
 import Control.Monad.Swap
@@ -15,6 +15,7 @@ instance Swap Now Behaviour where swap n = return (n >>= curIO)
 instance Swap Event Now where swap = planIO
 instance Swap Event Behaviour where swap e = whenJust (Nothing `step` fmap (fmap Just) e)
 
+plan :: Swap Event b => Event (b a) -> b (Event a)
 plan = swap
 
 class Monad b => Cur b where cur :: Behaviour a -> b a
@@ -30,7 +31,9 @@ instance (Wait r, Monad l, Swap r l) => Wait (l :. r) where waitEv = liftRight .
 wait :: (Wait m, Cur m) => Behaviour (Event b) -> m b
 wait b = cur b >>= waitEv
 
-class Monad e=>  DoIO e where
+
+
+class Monad e => DoIO e where
   async :: IO a -> e (Event a)
 
 instance DoIO Now where
@@ -55,10 +58,10 @@ data First a b = L a | R b | Tie a b
 
 firstObs :: Event a -> Event b -> Behaviour (Event (First a b))
 firstObs l r = whenJust $ combineMaybe <$> getNow l <*> getNow r where
-  combineMaybe (Just l) (Just r) = Just (Tie l r)
-  combineMaybe (Just l) Nothing  = Just (L   l  )
-  combineMaybe Nothing  (Just r) = Just (R     r)
-  combineMaybe Nothing  Nothing  = Nothing
+  combineMaybe (Just l') (Just r') = Just (Tie l' r')
+  combineMaybe (Just l') Nothing   = Just (L   l'   )
+  combineMaybe Nothing   (Just r') = Just (R      r')
+  combineMaybe Nothing   Nothing   = Nothing
 
 
 when :: Behaviour Bool -> Behaviour (Event ())
@@ -96,6 +99,10 @@ zipBE f (BehaviourEnd bx e) b = (f <$> bx <*> b) `switch` fmap (const b) e
 delay :: Functor f => (f :. Event) x -> (f :. Event) (Event x)
 delay  = close . fmap return . open
 
+noWait :: (Functor f, Swap Event f, Cur f) => (f :. Event) x -> (f :. Event) (Maybe x)
+noWait m = delay m >>= cur . getNow
+
+
 data BehaviourEnd x a = BehaviourEnd { behaviour :: Behaviour x, end ::  Event a }
 
 instance Monad (BehaviourEnd x) where
@@ -118,16 +125,12 @@ untilb b e = until b e >> cur b
 
 instance Functor (BehaviourEnd x) where fmap = liftM
 instance Applicative (BehaviourEnd x) where pure = return ; (<*>) = ap
-
-
-            
-            
-            
+          
 showChanges :: (Eq a, Show a) => Behaviour a -> Now ()
 showChanges b = loop where
  loop = do v <- cur b
            syncIO $ putStrLn (show v)
            e <- cur $ whenJust (toJust v <$> b)
-           e' <- planIO (fmap (const (loop)) e)
+           planIO (fmap (const (loop)) e)
            return ()
   where  toJust v x = if v == x then Nothing else Just x

@@ -17,12 +17,12 @@ import Prelude hiding (until)
 
 main = do screen <- initSDL
           runNow $
-              do (evs,quit) <- runEventStreamM <$> open getEvents
+              do evs <- getEvents
                  mousePos <- cur $ toMousePos evs
                  buttons  <- cur $ toMouseButtonsDown evs
                  bxs <- cur (boxes mousePos buttons)
                  drawAll screen bxs
-                 return quit
+                 return never
 
 
 filterUp n@(SDL.MouseButtonDown _ _ m) = Just n
@@ -92,14 +92,11 @@ toMousePos = fold getMousePos (0.0,0.0)
 getMousePos p (SDL.MouseMotion x y _ _) = (fromIntegral x, fromIntegral y)
 getMousePos p _                         = p
 
-getEvents ::  (Now :. EventStreamM SDL.Event) ()
-getEvents = loop where
- loop = 
-  do l <- waitIO ioGetEvents
-     if filter (== SDL.Quit) l /= []
-     then return ()
-     else (mapM_ emit l) >> loop
-
+getEvents ::  Now (EventStream SDL.Event )
+getEvents = Es <$> loop where
+  loop = do e <-  asyncIO (ioGetEvents)
+            e' <- planIO (loop <$ e)
+            return (pure e `switch` e')
 
 
 

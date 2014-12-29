@@ -1,5 +1,5 @@
 {-# LANGUAGE LambdaCase #-}
-module Data.IVar(IVar,newIVar, writeIVar, ivarVal) where
+module Data.IVar(IVar(..),newIVar, writeIVar, ivarVal) where
 import Control.Concurrent.MVar
 import Control.Applicative
 import System.IO.Unsafe
@@ -13,10 +13,12 @@ writeIVar :: IVar a -> a -> IO ()
 writeIVar (IVar m) a = 
   {-tryReadMVar m >>= \case
     Just x -> error "Written to IVar twice!"
-    Nothing -> -} putMVar m a
+    Nothing -> -}putMVar m a
 
 ivarVal :: IVar a -> a
-ivarVal (IVar a) = unsafePerformIO $ readMVar a
+ivarVal (IVar a) = unsafePerformIO $ 
+  do v <- readMVar a
+     return v
 
 -- incorrect, but sufficient here
 tryReadMVar mv = do mc <- tryTakeMVar mv
