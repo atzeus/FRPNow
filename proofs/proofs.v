@@ -7,6 +7,20 @@ Inductive Time : Set :=
  | Z : Time
  | S : Time -> Time.
 
+Inductive leqtime : Time -> Time -> Prop :=
+| leq_same : forall (l : Time), leqtime l l
+| leq_S    : forall (l r : Time), leqtime l r -> leqtime l (S r).
+
+
+Lemma leq_trans : forall (a b c : Time), leqtime a b -> leqtime b c -> leqtime a c.
+intros.
+induction H0.
+assumption.
+specialize (IHleqtime H).
+apply leq_S.
+assumption.
+Qed.
+
 CoInductive Ev (A : Set) : Set :=
  | CZ : A -> Ev A
  | CS : Ev A -> Ev A.
@@ -26,6 +40,11 @@ Fixpoint leqT {A : Set } (e : Ev A) (t : Time) : bool :=
   | CS e , S t => leqT e t
   end.
 
+Fixpoint inject {A : Set} (t : Time) (a : A) : Ev A :=
+match t with
+ | Z => CZ a
+ | S x => CS (inject x a)
+end.
 
 
 
@@ -312,20 +331,21 @@ CoFixpoint getNext {A : Set} (b : Beh (option A)) (tnow : Time) (tleft : Time): 
 
 Definition whenJust {A : Set} (b : Beh (option A)) := fun t => getNext b Z t.
 
+Inductive EventSyntax : Set -> Type :=
+| ERet : forall {x : Set}, x -> EventSyntax x
+| EBind : forall {x y: Set}, EventSyntax x -> (x -> EventSyntax y) -> EventSyntax y.
 
-Inductive FRPSyntax {event : Set -> Set} {behavior : Set -> Set}: Set -> Set :=
-| ERet : forall x : Set , x -> FRPSyntax (event x)
-| EBind : forall x y: Set, event x -> (x -> event y) -> FRPSyntax (event y)
-| BRet : forall x : Set, x -> FRPSyntax (behavior x)
+Inductive BehaviorSyntax {event : Type -> Type} {behavior : Type -> Type} : Type -> Type :=
+| BRet : forall {x : Set}, x -> BehaviorSyntax x
 
-| BBind : forall x y: Set, behavior x ->
-          (x -> behavior y) -> FRPSyntax (behavior y)
-| Switch : forall x : Set, behavior x -> event (behavior x) -> FRPSyntax (behavior x)
-
-| WhenJust : forall x : Set, behavior (option x) -> FRPSyntax (behavior (event x)).
-
+| BBind : forall {x y: Set}, BehaviorSyntax y ->
+          (y -> BehaviorSyntax x) -> BehaviorSyntax x
+| Switch : forall {x : Set}, BehaviorSyntax x -> event (behavior x) -> BehaviorSyntax x
+| WhenJust : forall {x : Set}, BehaviorSyntax (option x) -> BehaviorSyntax (event x).
+(*
 Fixpoint toDenotation {A : Set} (s : @FRPSyntax Ev Beh A) : A :=
  match s with
+  | EPrim _ t x => inject t x
   | ERet B x => (returnEv x) : Ev B 
   | EBind _ _ m f => bindEv m f
   | BRet _ x => returnB x
@@ -333,6 +353,90 @@ Fixpoint toDenotation {A : Set} (s : @FRPSyntax Ev Beh A) : A :=
   | Switch _ m e => switch m e
   | WhenJust _ b => whenJust b
  end.
+*)
+
+Inductive obs_eq : forall (A: Set), Time -> A -> A -> Prop :=
+  | eq_refl : forall {A : Set} (t : Time) (a : A), obs_eq t a a
+  | eq_b    : forall {A : Set} (t : Time) (a b : Beh A), 
+              (forall t', leqtime t t' -> obs_eq t' (a t') (b t'))
+              -> obs_eq t a b
+  | eq_e    : forall {A : Set} (t : Time) (a b : Ev A),
+              obs_eq t (obs_ev a t) (obs_ev b t) -> 
+              obs_eq t a b.
+
+Lemma obs_eq_weak : forall {A : Set} (a b : A) (t f : Time), obs_eq t a b /\ leqtime t f -> obs_eq f a b.
+intros.
+elim H.
+intros.
+induction H0.
+apply eq_refl.
+apply eq_b.
+intros.
+exact (H0 t' H3).
+intros.
+apply eq_refl.
+induction H1.
+assumption.
+induction
+
+Lemma obs_inj_ev : forall {A : Set} (s : A) (l : Time), obs_ev (inject l s) l = Some s.
+intros.
+induction l.
+unfold obs_ev.
+unfold inject.
+reflexivity.
+simpl.
+assumption.
+Qed.
+
+Lemma obs_eq_inj : forall {A : Set} ( s : A) (t p: Time), leqtime p t -> obs_eq t (inject p s) (inject t s).
+intros.
+apply eq_e.
+induction H.
+apply eq_refl.
+
+rewrite obs_inj_ev.
+intros.
+
+induction H.
+apply eq_refl.
+apply eq_e.
+intros.
+simpl.
+
+simpl.
+
+Lemma forgetPast {A : Set} : forall (s x: Beh A)
+           (t : Time), obs_eq t s (switch x (inject t s)).
+intros.
+apply eq_b.
+intros.
+induction H.
+
+unfold switch.
+rewrite obs_inj_ev.
+
+apply eq_refl.
+unfold switch.
+simpl.
+apply eq_refl.
+unfold inject.
+unfold switch.
+simpl.
+simpl.
+simpl.
+destruct t'.
+unfold switch.
+simpl.
+apply eq_refl.
+
+unfold switch.
+simpl.
+
+
+unfold switch.
+unfold obs_ev.
+simpl.
 
 
 
