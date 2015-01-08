@@ -73,8 +73,10 @@ when b = whenJust $ choose <$> b where
   choose False = Nothing
 
 
-change :: Eq a => Behavior a -> Behavior (Event ())
-change b = do v <- b ; when $ (/= v) <$> b
+change :: Eq a => Behavior a -> Behavior (Event a)
+change b = do v <- b ; whenJust (isNot v <$> b) where
+  isNot v a | v == a = Nothing
+            | otherwise = Just a
 
 becomesTrue :: Behavior Bool -> Behavior (Event ())
 becomesTrue b = do v <- b

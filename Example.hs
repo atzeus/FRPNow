@@ -3,11 +3,10 @@
 
 import qualified Graphics.UI.SDL as SDL
 import Control.Monad.Fix
-import Graphics.UI.SDL.Keysym
 import Control.Applicative hiding (empty)
-import Control.Concurrent
 import Control.Monad hiding (when)
 import Control.FRPNow 
+import SDLFRP
 import Debug.Trace
 import Data.Maybe
 import Data.Set hiding (filter,fold, foldl,map)
@@ -25,10 +24,6 @@ main = do screen <- initSDL
                  return never
 
 
-filterUp n@(SDL.MouseButtonDown _ _ m) = Just n
-filterUp _ = Nothing
-
-          
 boxes :: Behavior Point -> Behavior (Set MouseBtn) -> Behavior (Behavior [Box])
 boxes mousePos buttons = parList $ box `sampleOn` clicks MLeft 
   where
@@ -75,123 +70,4 @@ boxes mousePos buttons = parList $ box `sampleOn` clicks MLeft
   isDown m  = (m `member`) <$> buttons
 
 
-toMouseButtonsDown :: EventStream SDL.Event -> Behavior (Behavior (Set MouseBtn))
-toMouseButtonsDown = fold updateSet empty where
-  updateSet s (SDL.MouseButtonDown _ _ m) | Just m' <- toM m = insert m' s
-  updateSet s (SDL.MouseButtonUp   _ _ m) | Just m' <- toM m = delete m' s
-  updateSet s _                                              = s
-
-toM SDL.ButtonLeft    = Just MLeft
-toM SDL.ButtonMiddle  = Just MMiddle
-toM SDL.ButtonRight   = Just MRight
-toM _             = Nothing
-
-toMousePos :: EventStream SDL.Event -> Behavior (Behavior Point)
-toMousePos = fold getMousePos (0.0,0.0)
-
-getMousePos p (SDL.MouseMotion x y _ _) = (fromIntegral x, fromIntegral y)
-getMousePos p _                         = p
-
-getEvents ::  Now (EventStream SDL.Event )
-getEvents = Es <$> loop where
-  loop = do e <-  asyncIO (ioGetEvents)
-            e' <- planIO (loop <$ e)
-            return (pure e `switch` e')
-
-
-
-
-drawAll :: SDL.Surface -> Behavior [Box] -> Now ()
-drawAll screen b = loop where
-  loop :: Now ()
-  loop =
-   do v <- cur b
-      e <- cur $ change b
-      e' <- asyncIO $ drawBoxes screen v
-      planIO (fmap (const loop) (e >> e'))
-      return ()
-      
-
-
--- nice while thing
-again :: Monad m => m Bool
-again = return True
-stop :: Monad m => m Bool
-stop = return False
-
-while :: Monad m => m Bool -> m ()
-while m = do v <- m 
-             if v 
-             then while m
-             else return ()
-
--- Below: IO Stuff
-
-initSDL = do  SDL.init [SDL.InitEverything]
-              SDL.setVideoMode 800 600 32 [SDL.DoubleBuf]
-              SDL.getVideoSurface
-
-
-ioGetEvents :: IO [SDL.Event]
-ioGetEvents = do h <- SDL.waitEvent
-                 t <- loop
-                 return (h : t)
-  where loop = do h <- SDL.pollEvent 
-                  case h of
-                    SDL.NoEvent -> return []
-                    _       -> do t <- loop ;  return (h : t)
-
-drawBox :: SDL.Surface -> Box -> IO ()
-drawBox s (Box r c) =
-  do p <- getColor s c
-     SDL.fillRect s (Just $ toRect r) p
-     return ()
-     
-drawBoxes s l = 
-  do p <- getColor s (Color 0 0 0)
-     SDL.fillRect s (Just $ SDL.Rect 0 0 1200 1000) p
-     mapM_ (drawBox s) (reverse l)
-     SDL.flip s
-
-
-
-data MouseBtn  = MLeft | MMiddle | MRight deriving (Ord,Eq,Show)
-
-type Point     = (Double,Double) -- in pixels
-
-(.+) :: Point -> Point -> Point
-(x,y) .+ (x',y') = (x+x', y + y')
-
-(.-) :: Point -> Point -> Point
-(x,y) .- (x',y') = (x-x', y - y')
-
-
-data Rect    = Rect {leftup :: Point, rightdown :: Point} deriving (Eq,Show)
-
-moveRect :: Rect -> Point -> Rect
-moveRect (Rect lu rd) p = Rect (lu .+ p) (rd .+ p)
-
-isInside :: Point -> Rect -> Bool
-isInside (x,y) (normalize -> Rect (l,u) (r,d)) = x >= l && x <= r && y >= u && y <= d
-
-rect p1 p2 = normalize (Rect p1 p2)
-
-toRect :: Rect -> SDL.Rect
-toRect (normalize -> Rect (lx,uy) (rx,dy)) = SDL.Rect (round lx) (round uy) (round (rx - lx)) (round (dy - uy))
-
-normalize (Rect (lx,uy) (rx,dy)) = Rect (min lx rx, min uy dy) (max lx rx, max uy dy)
-
-data Color   = Color {  r :: Double, g :: Double, b :: Double} deriving (Eq,Show)
-
-red = Color 1 0 0 
-green = Color 0 1 0
-blue = Color 0 0 1
-
-getColor :: SDL.Surface -> Color -> IO SDL.Pixel
-getColor s c = 
-     let fmt = SDL.surfaceGetPixelFormat s in
-     SDL.mapRGB fmt (con r) (con g) (con b)
-  where con d = round ( (d c) * 255.0)
-
-data Box     = Box Rect Color deriving (Eq, Show)
 
