@@ -279,22 +279,42 @@ apply ev_bi.
 exact (bind_assoc x k h).
 Qed.
 
-Definition Beh (A : Set) := Time -> A.
+Inductive Beh (A : Set) : Set :=
+ | Bh : (Time -> A) -> Beh A.
 
-Definition returnB {A : Set} (a : A) : Beh A := fun x => a.
-Definition bindB  {A B :Set} (m : Beh A) (f : A -> Beh B) := fun t => f (m t) t.
+Definition getFun {A : Set} (a : Beh A) : Time -> A := match a with
+ | Bh x => x
+ end.
+
+Definition returnB {A : Set} (a : A) : Beh A := Bh (fun x => a).
+Definition bindB  {A B :Set} (m : Beh A) (f : A -> Beh B) : Beh B := Bh (fun t => getFun (f (getFun m t)) t ).
+
+
 
 Require Import Coq.Logic.FunctionalExtensionality.
 
-(* Prove that Ev is a monad *)
+Lemma wrap_unwrap_B : forall {A : Set} (b : Beh A), Bh (getFun b) = b.
+intros.
+destruct b.
+unfold getFun.
+reflexivity.
+Qed.
+
+Lemma unwrap_wrap_B : forall {A : Set} (b : Time -> A), getFun (Bh b) = b.
+intros.
+unfold getFun.
+reflexivity.
+Qed.
+
+(* Prove that Beh is a monad *)
 
 Lemma bind_one_r_B : forall {A : Set} (m : Beh A), m = bindB m returnB.
 intros.
 unfold returnB.
 unfold bindB.
 simpl.
-apply functional_extensionality.
-intros.
+rewrite <- eta_expansion.
+rewrite wrap_unwrap_B.
 reflexivity.
 Qed.
 
@@ -302,7 +322,9 @@ Lemma bind_one_l_B : forall {A B : Set} (a : A) (k : A -> Beh B), k a = bindB (r
 intros.
 unfold returnB.
 unfold bindB.
-apply functional_extensionality.
+simpl.
+rewrite <- eta_expansion.
+rewrite wrap_unwrap_B.
 reflexivity.
 Qed.
 
@@ -310,17 +332,17 @@ Lemma bind_assoc_B : forall {A B C: Set} (m : Beh A) (k : A -> Beh B) (h : B -> 
         bindB m (fun x => bindB (k x) h) = bindB (bindB m k) h.
 intros.
 unfold bindB.
-apply functional_extensionality.
+simpl.
 reflexivity.
 Qed.
 
-Definition switch {A : Set} (b : Beh A ) (e : Ev (Beh A)) := fun t =>
+Definition switch {A : Set} (b : Beh A ) (e : Ev (Beh A)) := Bh (fun t =>
                   match obs_ev e t with
-                    | Some a => a t
-                    | None  => b t
-                  end.
+                    | Some (Bh a) => a t
+                    | None  => getFun b t
+                  end).
 
-CoFixpoint getNext {A : Set} (b : Beh (option A)) (tnow : Time) (tleft : Time): Ev A :=
+CoFixpoint getNext {A : Set} (b : Time -> (option A)) (tnow : Time) (tleft : Time): Ev A :=
   match tleft with
   |Z => match b tnow with
             | Some a => CZ a
@@ -329,7 +351,7 @@ CoFixpoint getNext {A : Set} (b : Beh (option A)) (tnow : Time) (tleft : Time): 
   |S x => CS (getNext b (S tnow) x)
   end.
 
-Definition whenJust {A : Set} (b : Beh (option A)) := fun t => getNext b Z t.
+Definition whenJust {A : Set} (b : Beh (option A)) := Bh (fun t => getNext (getFun b) Z t).
 
 Inductive EventSyntax : Set -> Type :=
 | ERet : forall {x : Set}, x -> EventSyntax x
@@ -355,19 +377,105 @@ Fixpoint toDenotation {A : Set} (s : @FRPSyntax Ev Beh A) : A :=
  end.
 *)
 
-Inductive obs_eq : forall (A: Set), Time -> A -> A -> Prop :=
+
+Inductive obs_eq : forall (A : Set), Time -> A -> A -> Prop :=
   | eq_refl : forall {A : Set} (t : Time) (a : A), obs_eq t a a
   | eq_b    : forall {A : Set} (t : Time) (a b : Beh A), 
-              (forall t', leqtime t t' -> obs_eq t' (a t') (b t'))
+              (forall t', leqtime t t' -> obs_eq t (getFun a t') (getFun b t'))
               -> obs_eq t a b
   | eq_e    : forall {A : Set} (t : Time) (a b : Ev A),
               obs_eq t (obs_ev a t) (obs_ev b t) -> 
               obs_eq t a b.
 
-Lemma obs_eq_weak : forall {A : Set} (a b : A) (t f : Time), obs_eq t a b /\ leqtime t f -> obs_eq f a b.
+
+
+Lemma obs_eq_sym : forall {A : Set} (a b : A) (t : Time), obs_eq t a b -> obs_eq t b a.
+intros.
+auto.
+induction H.
+apply eq_refl.
+apply eq_b.
+assumption.
+apply eq_e.
+assumption.
+Qed.
+
+Require Import Coq.Program.Equality.
+
+Check JMeq_ind_r.
+
+
+Check JMeq_eq.
+
+Lemma type_thing : forall {F : Set -> Set } {x y : Set}, F x = F y -> x = y.
+intros.
+f_equal H.
+
+Lemma obs_eqb_trans : forall {A : Set} (a b c : A) (t : Time), obs_eq t a b -> obs_eq t b c -> obs_eq t a c.
+intros.
+induction H.
+assumption.
+apply eq_b.
+intros.
+specialize (H t' H2).
+specialize (H1 t' H2).
+specialize (H1 (getFun c t')).
+apply H1.
+dependent destruction H0.
+
+apply eq_refl.
+apply JMeq_eq in x.
+simpl_one_dep_JMeq x1.
+on_JMeq in x1.
+rewrite <- x1 in H0.
+apply (H0 t').
+apply eq_b in H0.
+destruct b.
+destruct c.
+
+dependent destruction H0.
+apply eq_refl.
+
+
+dependent destruction H0.
+assumption.
+destruct b.
+rewrite unwrap_wrap_B in H1.
+
+
+unfold getFun in H1.
+simpl in H1.
+dependent destruction H0.
+assumption.
+
+apply eq_b.
+intros.
+specialize (H t' H2).
+specialize (H1 t' H2).
+specialize (H1 (c t')).
+apply eq_b in H0.
+
+
+
+apply H1.
+
+specialize (@H1 (Beh A) c H0).
+intros.
+
+induction H0.
+assumption.
+
+
+
+
+
+
+
+Lemma obs_eq_weak : forall {A : Set} (a b : A) (t f : Time), obs_eq t a b -> leqtime t f -> obs_eq f a b.
 intros.
 elim H.
 intros.
+apply eq_refl.
 induction H0.
 apply eq_refl.
 apply eq_b.

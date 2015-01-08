@@ -15,15 +15,15 @@ import Prelude hiding (until,length)
 import Debug.Trace
 
 
-newtype EventStream a = Es { getEs :: Behaviour (Event [a]) }
+newtype EventStream a = Es { getEs :: Behavior (Event [a]) }
 
 instance Functor EventStream where
   fmap f (Es b) = Es $ (fmap f <$>) <$> b
 
-next :: EventStream a -> Behaviour (Event a)
+next :: EventStream a -> Behavior (Event a)
 next e = fmap head <$> getEs e
 
-nextSim :: EventStream a -> Behaviour (Event [a]) 
+nextSim :: EventStream a -> Behavior (Event [a]) 
 nextSim e = getEs e
 
 repeatEvN :: Now (Event [a]) -> Now (EventStream a)
@@ -34,7 +34,7 @@ repeatEvN en = Es <$> loop where
 
 
 
-repeatEv :: Behaviour (Event a) -> EventStream a
+repeatEv :: Behavior (Event a) -> EventStream a
 repeatEv b = Es $ loop where
    loop = do e <- b
              let e' = (\x -> [x]) <$> e
@@ -53,7 +53,7 @@ merge l r = loop where
   nxt (L    l  ) = l 
   nxt (R      r) = r 
 
-tailEs :: EventStream a -> Behaviour (Event (EventStream a))
+tailEs :: EventStream a -> Behavior (Event (EventStream a))
 tailEs es = fmap (const es) <$> getEs es
                
 switchEs :: EventStream a -> EventStream a -> EventStream a
@@ -67,7 +67,7 @@ singletonEs :: Event a -> EventStream a
 singletonEs e = Es $ pure (fmap (\x -> [x]) e) `switch` fmap (const (getEs emptyEs)) e
 
 
-fmapB :: Behaviour (a -> b) -> EventStream a -> EventStream b
+fmapB :: Behavior (a -> b) -> EventStream a -> EventStream b
 fmapB f es = Es $ loop where
  loop =  
    do e  <- getEs es
@@ -76,7 +76,7 @@ fmapB f es = Es $ loop where
  nxt l = do fv <- f ; return (fmap fv l)
 
 
-nextJusts :: EventStream (Maybe a) -> Behaviour (Event [a])
+nextJusts :: EventStream (Maybe a) -> Behavior (Event [a])
 nextJusts es = loop where
   loop = 
     do e <- getEs es
@@ -92,21 +92,21 @@ filterJusts es = Es loop where
              pure e `switch` (loop <$ e)
 
 
-filterMapB :: Behaviour (a -> Maybe b) -> EventStream a -> EventStream b
+filterMapB :: Behavior (a -> Maybe b) -> EventStream a -> EventStream b
 filterMapB f e = filterJusts $ fmapB f e
 
-filterB :: Behaviour (a -> Bool) -> EventStream a -> EventStream a
+filterB :: Behavior (a -> Bool) -> EventStream a -> EventStream a
 filterB f = filterMapB (toMaybe <$> f) 
   where toMaybe f = \a ->  if f a then Just a else Nothing
 
-during :: EventStream a -> Behaviour Bool -> EventStream a
+during :: EventStream a -> Behavior Bool -> EventStream a
 e `during` b = filterB (const <$> b) e
 
-sampleOn :: Behaviour a -> EventStream x -> EventStream a
+sampleOn :: Behavior a -> EventStream x -> EventStream a
 sampleOn b = fmapB (const <$> b) 
 
 
-scanlEv :: (a -> b -> a) -> a -> EventStream b -> Behaviour (EventStream a)
+scanlEv :: (a -> b -> a) -> a -> EventStream b -> Behavior (EventStream a)
 scanlEv f i es = Es <$> loop i where
  loop i = 
   do e  <- getEs es
@@ -115,7 +115,7 @@ scanlEv f i es = Es <$> loop i where
      return (pure i' `switch` ev)
  nxt i l = loop (foldl f i l)
 
-foldr1Ev :: (a -> Event b -> b) -> EventStream a -> Behaviour (Event b)
+foldr1Ev :: (a -> Event b -> b) -> EventStream a -> Behavior (Event b)
 foldr1Ev f es = loop where
  loop = 
   do e  <- getEs es
@@ -124,20 +124,20 @@ foldr1Ev f es = loop where
  nxt [h]     = f h          <$> loop
  nxt (h : t) = f h . return <$> nxt t
 
-foldrEv :: a -> (a -> Event b -> b) -> EventStream a -> Behaviour b
+foldrEv :: a -> (a -> Event b -> b) -> EventStream a -> Behavior b
 foldrEv i f es = f i <$> foldr1Ev f es
 
-foldrSwitch :: Behaviour a -> EventStream (Behaviour a) -> Behaviour (Behaviour a)
+foldrSwitch :: Behavior a -> EventStream (Behavior a) -> Behavior (Behavior a)
 foldrSwitch b = foldrEv b switch
 
-foldB :: Behaviour a -> (Behaviour a -> b -> Behaviour a) -> EventStream b -> Behaviour (Behaviour a)
+foldB :: Behavior a -> (Behavior a -> b -> Behavior a) -> EventStream b -> Behavior (Behavior a)
 foldB b f es = scanlEv f b es >>= foldrSwitch b
 
-fold :: (a -> b -> a) -> a -> EventStream b -> Behaviour (Behaviour a)
+fold :: (a -> b -> a) -> a -> EventStream b -> Behavior (Behavior a)
 fold f i = foldB (pure i) f' 
   where f' b x = (\b -> f b x) <$> b
 
-parList :: EventStream (BehaviourEnd b ()) -> Behaviour (Behaviour [b])
+parList :: EventStream (BehaviorEnd b ()) -> Behavior (Behavior [b])
 parList = foldB (pure []) (flip (.:)) 
 
 
@@ -174,7 +174,7 @@ toEventStream = Es . loop where
             Just End      -> return emptyEmits
             Just (h :| t) -> lose t
             Nothing       -> return e
-  nxt :: [x] -> EH x -> Behaviour (Event ([x]))
+  nxt :: [x] -> EH x -> Behavior (Event ([x]))
   nxt [] End     = return never
   nxt l  End     = return (return (reverse l))
   nxt l (h :| t) = getNow (toView t) >>= \case 
@@ -190,7 +190,7 @@ instance Monad (EventStreamM x) where
                                  fa = fv >>= eend
                              in EventStreamM (app s fs) fa
 
-emit :: (Swap (BehaviourEnd x) f, Monad f) =>  x -> (f :. EventStreamM x) ()
+emit :: (Swap (BehaviorEnd x) f, Monad f) =>  x -> (f :. EventStreamM x) ()
 emit x = liftRight $ EventStreamM (singleEmit x) (return ())
 
 instance Wait (EventStreamM x) where 

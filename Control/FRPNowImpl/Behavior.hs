@@ -1,5 +1,5 @@
 {-# LANGUAGE RecursiveDo, ScopedTypeVariables, LambdaCase #-}
-module Control.FRPNowImpl.Behaviour(Behaviour,curIO, switch, whenJust, seqb, seqAlways) where
+module Control.FRPNowImpl.Behavior(Behavior,curIO, switch, whenJust, seqb, seqAlways) where
 import Control.Applicative hiding (empty,Const)
 import Control.Monad
 import Control.Concurrent.MVar
@@ -9,11 +9,11 @@ import Control.FRPNowImpl.Now
 import Debug.Trace
 
 infixr 3 :-> 
-data BState s a = (:->) { headB :: Now s a , tailB :: Event s (Behaviour s a) }
-                | SameAs (Behaviour s a)
+data BState s a = (:->) { headB :: Now s a , tailB :: Event s (Behavior s a) }
+                | SameAs (Behavior s a)
                 | Const a
 
-again :: BState s a -> Behaviour s a
+again :: BState s a -> Behavior s a
 again x = B $ 
   case x of
    _ :-> t -> evNow t >>= \case 
@@ -22,7 +22,7 @@ again x = B $
    SameAs b -> makeSameAs b
    Const _  -> return x
 
-makeSameAs :: Behaviour s a -> Now s (BState s a)
+makeSameAs :: Behavior s a -> Now s (BState s a)
 makeSameAs b = 
   getHT b >>= \case
     SameAs b' -> return (SameAs b')
@@ -30,22 +30,22 @@ makeSameAs b =
     _         -> return (SameAs b) 
 
 
-getHTFull :: Behaviour s a -> Now s (BState s a)
+getHTFull :: Behavior s a -> Now s (BState s a)
 getHTFull b = 
   getHT b >>= \case
           Const x -> return (pure x :-> never)
           SameAs b' -> getHTFull b'
           h :-> t  -> return (h :-> t)
 
-curIO :: Behaviour s a -> Now s a
+curIO :: Behavior s a -> Now s a
 curIO b = do h :-> _ <- getHTFull b
              h
    
 
-newtype Behaviour s a = B { getHT :: Now s (BState s a) }
+newtype Behavior s a = B { getHT :: Now s (BState s a) }
 
 
-instance Monad (Behaviour s) where
+instance Monad (Behavior s) where
   return a = B $ return (Const a)
   m >>= f = memo $  bind m f where
    bind m f = B $ getHT m >>= \case
@@ -55,7 +55,7 @@ instance Monad (Behaviour s) where
                      getHT (f x `switch'` t')
        Const x -> makeSameAs (f x)
 
-switch ::  Behaviour s a -> Event s (Behaviour s a) -> Behaviour s a
+switch ::  Behavior s a -> Event s (Behavior s a) -> Behavior s a
 switch b e = memo $  switch' b e 
 
 switch' b e = B $ 
@@ -69,7 +69,7 @@ switch' b e = B $
         Const x -> return (pure x :-> e)
 
 
-whenJust :: Behaviour s (Maybe a) -> Behaviour s (Event s a)
+whenJust :: Behavior s (Maybe a) -> Behavior s (Event s a)
 whenJust b = B $ 
   getHT b >>= \case
       SameAs b' -> getHT (whenJust b')
@@ -77,7 +77,7 @@ whenJust b = B $
       _ :-> t   -> do let tw = whenJust <$> t
                       return (getJust b :-> tw)
 
-getJust :: Behaviour s (Maybe a) -> Now s (Event s a)
+getJust :: Behavior s (Maybe a) -> Now s (Event s a)
 getJust b = getHT b >>= \case
      Const x -> return $ maybe never return x
      SameAs b' -> getJust b'
@@ -87,10 +87,10 @@ getJust b = getHT b >>= \case
            Just a -> return (pure a)
            Nothing  -> join <$> planIOWeak (getJust <$> t)
 
-seqb :: Behaviour s x -> Behaviour s a -> Behaviour s a
+seqb :: Behavior s x -> Behavior s a -> Behavior s a
 seqb l r = memo $  seqb' l r
 
-seqb' :: Behaviour s x -> Behaviour s a -> Behaviour s a
+seqb' :: Behavior s x -> Behavior s a -> Behavior s a
 seqb' l r = B $ getHT l >>= \case
   Const _   -> return $ SameAs r
   SameAs l' -> getHT (seqb' l' r)
@@ -101,7 +101,7 @@ seqb' l r = B $ getHT l >>= \case
           hr :-> tr -> return $ (hl >> hr) :-> ((l `seqb`) <$> tr)
 
 
-seqAlways :: Behaviour s a -> Now s ()
+seqAlways :: Behavior s a -> Now s ()
 seqAlways b = 
   getHT b >>= \case
    Const _ -> return ()
@@ -110,7 +110,7 @@ seqAlways b =
 
 
 
-memo :: Behaviour s a -> Behaviour s a
+memo :: Behavior s a -> Behavior s a
 memo b = B $ runMemo  where
   mvar = unsafePerformIO $ newMVar b
   {-# NOINLINE mvar #-}  
@@ -122,9 +122,9 @@ memo b = B $ runMemo  where
 {-# NOINLINE memo #-}  
 
 
-instance Functor (Behaviour s) where
+instance Functor (Behavior s) where
   fmap = liftM
 
-instance Applicative (Behaviour s) where
+instance Applicative (Behavior s) where
   pure = return
   (<*>) = ap
