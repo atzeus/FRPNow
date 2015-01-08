@@ -29,10 +29,10 @@ filterUp n@(SDL.MouseButtonDown _ _ m) = Just n
 filterUp _ = Nothing
 
           
-boxes :: Behaviour Point -> Behaviour (Set MouseBtn) -> Behaviour (Behaviour [Box])
+boxes :: Behavior Point -> Behavior (Set MouseBtn) -> Behavior (Behavior [Box])
 boxes mousePos buttons = parList $ box `sampleOn` clicks MLeft 
   where
-  box :: Behaviour (BehaviourEnd Box ())
+  box :: Behavior (BehaviorEnd Box ())
   box = open $
      do p1 <- cur mousePos
         let defineRect = rect p1 <$> mousePos
@@ -49,22 +49,22 @@ boxes mousePos buttons = parList $ box `sampleOn` clicks MLeft
         (Box  <$> r <*> color)  `until`  clickOn r MRight
 
 
-  dragRect :: Rect -> Behaviour (Behaviour Rect)  
-  dragRect r =  behaviour <$> open (loop r) where
+  dragRect :: Rect -> Behavior (Behavior Rect)  
+  dragRect r =  behavior <$> open (loop r) where
     loop r = do pure r `until` clickOn (pure r) MMiddle
                 offset <- cur mouseOffset
                 let mr = moveRect r <$> offset
                 mr `until` release MMiddle
                 cur mr >>= loop
                         
-  mouseOffset :: Behaviour (Behaviour Point)
+  mouseOffset :: Behavior (Behavior Point)
   mouseOffset = do p <- cur mousePos
                    return (mousePos >$< (.- p))
    
-  clickOn :: Behaviour Rect -> MouseBtn -> Behaviour (Event ())
+  clickOn :: Behavior Rect -> MouseBtn -> Behavior (Event ())
   clickOn r b = next $ clicks b `during` mouseOver r
 
-  mouseOver :: Behaviour Rect -> Behaviour Bool
+  mouseOver :: Behavior Rect -> Behavior Bool
   mouseOver r = isInside <$> mousePos <*> r
 
   clicks :: MouseBtn -> EventStream ()
@@ -75,7 +75,7 @@ boxes mousePos buttons = parList $ box `sampleOn` clicks MLeft
   isDown m  = (m `member`) <$> buttons
 
 
-toMouseButtonsDown :: EventStream SDL.Event -> Behaviour (Behaviour (Set MouseBtn))
+toMouseButtonsDown :: EventStream SDL.Event -> Behavior (Behavior (Set MouseBtn))
 toMouseButtonsDown = fold updateSet empty where
   updateSet s (SDL.MouseButtonDown _ _ m) | Just m' <- toM m = insert m' s
   updateSet s (SDL.MouseButtonUp   _ _ m) | Just m' <- toM m = delete m' s
@@ -86,7 +86,7 @@ toM SDL.ButtonMiddle  = Just MMiddle
 toM SDL.ButtonRight   = Just MRight
 toM _             = Nothing
 
-toMousePos :: EventStream SDL.Event -> Behaviour (Behaviour Point)
+toMousePos :: EventStream SDL.Event -> Behavior (Behavior Point)
 toMousePos = fold getMousePos (0.0,0.0)
 
 getMousePos p (SDL.MouseMotion x y _ _) = (fromIntegral x, fromIntegral y)
@@ -101,7 +101,7 @@ getEvents = Es <$> loop where
 
 
 
-drawAll :: SDL.Surface -> Behaviour [Box] -> Now ()
+drawAll :: SDL.Surface -> Behavior [Box] -> Now ()
 drawAll screen b = loop where
   loop :: Now ()
   loop =
