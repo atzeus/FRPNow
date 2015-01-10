@@ -14,6 +14,39 @@ import Data.Sequence hiding (reverse,scanl)
 import Prelude hiding (until,length)
 import Debug.Trace
 
+type EVS a = Event (EHT a)
+data EHT a = a :|| EVS a
+
+fmapBe :: Behavior (a -> b) -> EVS a -> Behavior (EVS b)
+fmapBe b e =  plan (apply <$> e) where
+  apply (h :|| t) = do h' <- b <*> pure h
+                       t' <- fmapBe b e
+                       return (h' :|| t')
+
+filterJustse :: EVS (Maybe a) -> EVS a
+filterJustse e = 
+  do h :|| t <- e
+     let t' = filterJustse t
+     case h of
+      Just x  -> return (x :|| t')
+      Nothing -> t'
+
+scanlEve :: (a -> b -> a) -> a -> EVS b -> EVS a
+scanlEve f i e = loop i <$> e where
+  loop i (h :|| t) = let i' = f i h
+                     in i' :|| (loop i' <$> t)
+
+foldr1Eve :: (a -> Event b -> b) -> EVS a -> Event b
+foldr1Eve f e = loop <$> e where
+  loop (h :|| t) = let t' = loop <$> t
+                   in f h t'
+
+wrap :: EVS a -> Behavior (EVS a)
+wrap e = getNow e >>= \case
+            Just (h :|| t) -> wrap t
+            Nothing -> pure e `switch` (wrapht <$> e)
+ where wrapht (_ :|| t) = wrap t
+
 
 newtype EventStream a = Es { getEs :: Behavior (Event [a]) }
 

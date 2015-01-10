@@ -1,5 +1,5 @@
 {-# LANGUAGE ScopedTypeVariables,TypeSynonymInstances,Rank2Types,TupleSections,LambdaCase,ExistentialQuantification,GADTs,GeneralizedNewtypeDeriving #-}
-module Control.FRPNowImpl.Now(Now, syncIO, asyncIO, evNow, firstObs, planIO, planIOWeak, planIOWeakKey, runFRPLocal, runFRP, Global) where
+module Control.FRPNowImpl.Now(Now, syncIO, asyncIO, asyncOS, evNow, firstObs, planIO, planIOWeak, planIOWeakKey, runFRPLocal, runFRP, Global) where
 
 import Control.Applicative
 import Control.Concurrent
@@ -41,6 +41,12 @@ asyncIO m =
      syncIO $ forkIO $ m >>= writeTIVar ti >> signal (flag env)
      return $ makeEvent (observeAt ti)
 
+asyncOS :: IO a -> Now s (Event s a)
+asyncOS m =  
+  do env <- getEnv
+     ti <- syncIO $ newTIVar (clock env)
+     syncIO $ forkOS $ m >>= writeTIVar ti >> signal (flag env)
+     return $ makeEvent (observeAt ti)
 
 evNow :: Event s a -> Now s (Maybe a)
 evNow e = 
