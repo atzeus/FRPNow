@@ -14,7 +14,7 @@ type Sample a = (Time,a)
 type History a = (a, Seq (Time,a))
 
 addSample :: History a -> Sample a -> History a
-addSample (i,ss ) s = (i, ss |> s)
+addSample (i,ss) s = (i, ss |> s)
 
 
 afterTime :: Time -> History a  -> History a
@@ -24,6 +24,8 @@ afterTime t (a,s) =
    (ts,x) :< f -> if ts <= t 
                   then afterTime t (x,f) 
                   else (a,s)
+
+
 
 
 buffer :: Behavior Time -> Behavior a -> Duration -> Behavior (EventStream (History a))

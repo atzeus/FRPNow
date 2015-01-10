@@ -2,7 +2,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving  #-}
 module Control.FRPNowImpl.FRPNow(
   Event, never,evNow,
-  Now,syncIO,asyncIO,planIO, planIOWeak, runNow,
+  Now,syncIO,asyncIO,asyncOS,planIO, planIOWeak, runNow,
   Behavior,curIO, switch, whenJust) where
 
 import Control.Monad
@@ -27,6 +27,9 @@ syncIO n = N $ N.syncIO n
 
 asyncIO :: IO a -> Now (Event a)
 asyncIO m = N $ E <$> N.asyncIO m
+
+asyncOS :: IO a -> Now (Event a)
+asyncOS m = N $ E <$> N.asyncOS m
 
 
 planIO :: Event (Now a) -> Now (Event a)
