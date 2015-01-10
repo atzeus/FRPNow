@@ -14,6 +14,7 @@ import Data.Sequence hiding (reverse,scanl)
 import Prelude hiding (until,length)
 import Debug.Trace
 
+{-
 type EVS a = Event (EHT a)
 data EHT a = a :|| EVS a
 
@@ -47,6 +48,7 @@ wrap e = getNow e >>= \case
             Nothing -> pure e `switch` (wrapht <$> e)
  where wrapht (_ :|| t) = wrap t
 
+-}
 
 newtype EventStream a = Es { getEs :: Behavior (Event [a]) }
 
