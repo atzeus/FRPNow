@@ -18,24 +18,13 @@ import Control.Concurrent -- for threaddelay
 
 main = do screen <- initSDL
           runNow $
-              do evs <- getEvents
+              do (evs, clock) <- getEventsTime (1.0 / 30.0)
                  mousePos <- cur $ toMousePos evs
                  buttons  <- cur $ toMouseButtonsDown evs
-                 clock <- makeClock (1.0 / 60.0)
-                 bxs <- cur (timeflows 4 0.2 clock mousePos buttons)
+                 bxs <- cur (timeflows 10 0.1 clock mousePos buttons)
                  drawAll screen bxs
                  return never
 
--- in seconds
-makeClock :: Duration -> Now (Behavior Time)
-makeClock minDelay = loop  where
-  delay = round (minDelay * 1000000.0)
-  loop  = 
-      do now <- syncIO $ getTicks 
-         e <- async (threadDelay delay)
-         let nowsecond = fromIntegral now / 1000.0
-         e' <- planIO (loop <$ e)
-         return (pure nowsecond `switch` e')
 
 iteratenM :: Monad m => (a -> m a) -> a -> Integer -> m [a]
 iteratenM f a n 
