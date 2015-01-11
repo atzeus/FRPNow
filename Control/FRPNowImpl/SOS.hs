@@ -4,22 +4,16 @@ module Control.FRPNowImpl.SOS where
 import Control.Applicative
 import Control.Monad
 
-data Event m a = E (m (Either (Event m a) a))
-               | Never
+data Event m a = E { runEvent :: m (Either (Event m a) a) }
 
-never :: Event m a
-never = Never
+never :: Monad m => Event m a
+never = E (return (Left never))
 
 instance Monad m => Monad (Event m) where
   return x = E $ return $ Right x
-  Never >>= _ = Never
-  (E m) >>= f = 
-    E $ m >>= \case
+  m >>= f = E $ runEvent m >>= \case
       Left  m' -> return $ Left $ m' >>= f
-      Right x  -> 
-        case f x of
-         Never -> return $ Left Never
-         E fm -> fm
+      Right x  -> runEvent (f x)
 
 {- This is symmetric! 
   
@@ -28,8 +22,6 @@ instance Monad m => Monad (Event m) where
     of simultaneity )
 -} 
 minTime :: Monad m => Event m a -> Event m b -> Event m ()
-minTime Never r = () <$ r
-minTime l Never = () <$ l
 minTime (E lm) (E rm) = E $ rm >>= \case
   Right _ -> return $ Right ()
   Left r' -> lm >>= \case  
@@ -40,29 +32,29 @@ data Behavior m a = B { runBehavior :: m (a, Event m (Behavior m a)) }
 
 instance Monad m => Monad (Behavior m) where
   return x = B $ return (x, never)
-  m >>= f = B $ do (h,t) <- runBehavior m
-                   runBehavior $ f h `switch` ((>>= f) <$> t)
+  m >>= f  = B $ do (h,t) <- runBehavior m
+                    runBehavior $ f h `switch` ((>>= f) <$> t)
                    
--- associative!
+-- associative! 
+-- This means, denotationally, 
+-- switchEv (tl,bl) (tr,br) 
+--  | tr <= tl = (tr, br)
+--  | otherwise = (tl, bl `switch` (tr,br))                              
 switchEv :: Monad m => Event m (Behavior m a) -> Event m (Behavior m a) -> Event m (Behavior m a)
-switchEv Never r = r
-switchEv l Never = l
-switchEv l@(E lm) r@(E rm) = b <$ minTime l r where
- b = B $ rm >>= \case
+switchEv l r = b <$ minTime l r where
+ b = B $ runEvent r >>= \case
    Right rb -> runBehavior rb
-   Left r' -> lm >>= \case
+   Left r' -> runEvent l >>= \case
      Right lb -> do (hl,tl) <- runBehavior lb
                     return (hl, switchEv tl r')
      Left l' -> error "Cannot happen"
      
 switch :: Monad m=>  Behavior m a -> Event m (Behavior m a) -> Behavior m a
-switch b Never = b
-switch (B bm) se@(E em) = 
- B $ em >>= \case
-  Right (B x) -> x
-  Left e -> do (h,t) <- bm
-               let t' = (`switch` e) <$> t
-               return (h, switchEv t' e)
+switch b e = 
+ B $ runEvent e >>= \case
+  Right x -> runBehavior x
+  Left e -> do (h,t) <- runBehavior b
+               return (h, switchEv t e)
 
 class Monad m => Plan m where
   plan :: Event m (m a) -> m (Event m a)
