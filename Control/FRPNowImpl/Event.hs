@@ -77,14 +77,4 @@ first l r =  memo $ first' l r where
          MinBound -> After MinBound e
          Time ts -> runEv' e (Time $ prevRound ts)
 
-memo :: Event s a -> Event s a
-memo e = E $ \t -> unsafePerformIO $ runMemo t where
-  mvar = unsafePerformIO $ newMVar (After MinBound e)
-  {-# NOINLINE mvar #-}  
-  runMemo t = 
-    do es <- takeMVar mvar 
-       let es' = runEv' (again es) t
-       putMVar mvar es'
-       return es'
-{-# NOINLINE memo #-}  
 
