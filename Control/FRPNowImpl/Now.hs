@@ -6,19 +6,15 @@ import Control.Concurrent
 import Control.Concurrent.MVar
 import Control.Monad
 import Control.Monad.Reader
-import Debug.Trace
 import Data.Maybe
 import Data.TIVar
-import Data.IVar
 import Control.Concurrent
 import Control.Concurrent.ConcFlag
 import System.IO.Unsafe
 import Data.Ref
 import Data.IORef
 
-
 -- Events 
-
 
 data Event s a = E { runEvent' :: Now s (Either (Event s a) a) }
                | Never
