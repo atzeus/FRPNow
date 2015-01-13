@@ -95,6 +95,7 @@ green = Color 0 1 0
 blue = Color 0 0 1
 black = Color 0 0 0
 grey = Color 0.1 0.1 0.1
+white = Color 1 1 1 
 
 lerp :: Double -> Double -> Double -> Double
 lerp i l r = r * i' + l * (1 - i') where
@@ -148,7 +149,7 @@ getEventsTime delay =
             let timeb = snd <$> e'
             t <- syncIO $ SDL.getTicks
             let ti = fromIntegral t /1000.0
-            syncIO (putStrLn (show ti))
+            --syncIO (putStrLn (show ti))
             return (pure e `switch` evs, pure ti `switch` timeb)
   delaymillis = round (delay * 1000.0)
 

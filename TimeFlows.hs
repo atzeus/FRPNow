@@ -18,10 +18,10 @@ import Control.Concurrent -- for threaddelay
 
 main = do screen <- initSDL
           runNow $
-              do (evs, clock) <- getEventsTime (1.0 / 30.0)
+              do (evs, clock) <- getEventsTime (1.0 / 60.0)
                  mousePos <- cur $ toMousePos evs
                  buttons  <- cur $ toMouseButtonsDown evs
-                 bxs <- cur (timeflows 10 0.1 clock mousePos buttons)
+                 bxs <- cur (timeflows 15 0.05 clock mousePos buttons)
                  drawAll screen bxs
                  return never
 
@@ -37,11 +37,15 @@ iteratenM f a n
 timeflows :: Integer -> Double -> Behavior Time -> Behavior Point -> Behavior (Set MouseBtn) -> Behavior (Behavior [Box])
 timeflows n d clock mousePos buttons = 
  do l <- iteratenM nextBox box n
-    return $ foldl (\x y -> (:) <$> y <*> x) (pure []) (box : l)
+    return $ reverse <$> fadeOut <$> foldl (\x y -> (:) <$> y <*> x) (pure []) (box : l)
 
   where
   nextBox :: Behavior Box -> Behavior (Behavior Box)
   nextBox b = delayBy clock b d
+
+  fadeOut l = zipWith fade [0..] l where
+    fac = 1.0 / fromIntegral n
+    fade i (Box r c) = Box r (mixi (i * fac) c black)
 
   box :: Behavior Box
   box = Box <$> (rectAt (50,50) <$> mousePos) <*> (btnsToColor <$> buttons)
@@ -53,7 +57,10 @@ timeflows n d clock mousePos buttons =
   btnToColor MMiddle = green
   btnToColor MRight = blue
   btnsToColor :: Set MouseBtn -> Color
-  btnsToColor s = S.foldl (mixi (1.0 / n )) grey (S.map btnToColor s)
+  btnsToColor s = if n == 0
+                  then white
+                  else S.foldl (mixi (1.0 / n )) grey (S.map btnToColor s)
+                  
       where n = fromIntegral $ S.size s
   rectAt s p = Rect (p .- hs) (p .+ hs)
         where hs = 0.5 .* s

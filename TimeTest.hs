@@ -21,14 +21,14 @@ test2 =
       return ()
 -}
 testb = 
-  do e <- asyncIO (threadDelay 1000000 >> return 1)
+  do --e <- asyncIO (threadDelay 1000000 >> return 1)
      --e2 <- asyncIO (threadDelay 10000 >> return 2)
      
      {-e2 <- asyncIO (threadDelay 2000000 >> return 2)
      a <- planIO (return 3 <$ e)
      -}
 --     a <- firstObsNow e e2
-     --b <- count1 500000 :: Now (Behaviour Int)
+     b <- count1 500000 :: Now (Behavior Int)
      -- b2 <- count1 700000 :: Now (Behaviour Int)
      --v <- cur $ whenJust ( (\x -> if x > 10 then Just 1 else Nothing) <$> b)
      --e <- planIOWeak ((syncIO (putStrLn "Bla") >> return 10) <$ v)
@@ -39,9 +39,9 @@ testb =
 
      e' <- cur $ bla e
   -}   
---     showChanges $ (,) <$> b <*> getNow v
-     e' <- cur $ bla e
-     return  e' -- (never :: Event Int)
+     showChanges b
+     --e' <- cur $ bla e
+     return  (never :: Event Int)
      {-
      let evs = b `sampleOn` (repeatEv $ change b)
      let isEven x = x `mod` 2 == 0
@@ -75,7 +75,7 @@ bla e1 = let e = when $ (== 1) <$> b
              b = e >>= \e2 ->  pure 0  `switch` (pure 2 <$ e2)
          in b
 -}
-
+{-
 bla :: Event Int -> Behaviour (Event Int)
 bla e = loop where
   loop = getNow e >>= \case
@@ -92,11 +92,12 @@ sampleEvery delay b = loop where
            return ()
 
 
-
-count1 :: Int -> Now (Behaviour Int)
+-}
+count1 :: Int -> Now (Behavior Int)
 count1 delay = loop 0 where
   loop i = 
-    do e <- asyncIO (threadDelay  delay)
+    do 
+       e <- asyncIO (threadDelay  delay)
        e' <- planIO (fmap (const (loop (i+1))) e)
        return (pure i `switch` e')
 

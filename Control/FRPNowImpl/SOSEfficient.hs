@@ -8,33 +8,44 @@ import Data.IORef
 import System.IO.Unsafe
 
 
-data Event m a = E { runEvent' :: m (EventState m a) }
+data Event m a = E { runEvent' :: m (Either (Event m a) a) }
                | Never
 
-data EventState m a = Done a
-                    | SameAs (Event m a)
-                    | NotYet (Event m a)
+data EMemoOutcome m a = EMemoAgain (m (EMemoOutcome m a))
+                      | ESameAs (Event m a)
+                      | EDone a
 
-runEvent :: Monad m => Event m a -> m (EventState m a)
-runEvent Never = return $ NotYet Never
-runEvent (E m) = m >>= \case
-     Done a -> return $ Done a
-     SameAs x -> runEvent x
-     NotYet e -> return $ NotYet e
+memoE :: MonadIO m => m (EMemoOutcome m a) -> Event m a
+memoE m = E $ runMemo where
+  mem = unsafePerformIO $ newIORef m
+  {-# NOINLINE mem #-}  
+  runMemo = 
+    do m <- liftIO $ readIORef mem 
+       liftIO $ writeIORef mem (error "<<FRP loop>>")
+       c <- m
+       (res,m') <- case c of
+         EDone a       -> return (Right a         , return c          )
+         EMemoAgain m' -> return (Left $ E runMemo, m'                )
+         ESameAs Never -> return (Left Never      , return c          )
+         ESameAs (E e) -> e >>= \case
+              Left e' -> return (Left e'         , return (ESameAs e'))
+              Right a -> return (Right a         , return (EDone a)   )
+       liftIO $ writeIORef mem m'
+       return res
+{-# NOINLINE memoE #-}  
 
 never :: Event m a
 never = Never
 
 instance MonadIO m => Monad (Event m) where
-  return x = E $ return $ Done x
+  return x = E $ return $ Right x
   Never >>= f = Never
-  m >>= f = memoE $ bind m f where
-    bind Never f = Never
-    bind m f = E $ runEvent m >>= return . \case
-        NotYet m' -> NotYet (bind m' f)
-        Done x -> SameAs (f x)
+  (E m) >>= f = memoE $ bind m f where
+    bind m f = m >>= return .  \case
+        Left Never  -> ESameAs Never
+        Left (E m') -> EMemoAgain (bind m' f)
+        Right x     -> ESameAs (f x)
                     
- 
 {- This is symmetric! 
   
  ( note that first :: Event a -> Event a -> Event a
@@ -44,34 +55,53 @@ instance MonadIO m => Monad (Event m) where
 minTime :: MonadIO m => Event m a -> Event m b -> Event m ()
 minTime Never r = () <$ r
 minTime l Never = () <$ l
-minTime l r = memoE (min l r) where
-  min l r = E $ runEvent r >>= \case
-       Done _ -> return $ Done ()
-       NotYet Never -> return $ SameAs (() <$ l)
-       NotYet r' -> runEvent l >>= \case
-         Done _       -> return $ Done ()
-         NotYet Never -> return $ SameAs (() <$ r)
-         NotYet l'    -> return $ NotYet (min l' r')
+minTime (E l) (E r) = memoE (min l r) where
+  min l r = r >>= \case
+       Right _     -> return $ EDone ()
+       Left Never  -> return $ ESameAs $ () <$ (E l)
+       Left (E r') -> l >>= return . \case
+         Right _     -> EDone ()
+         Left Never  -> ESameAs $ () <$ (E r')
+         Left (E l') -> EMemoAgain (min l' r')
 
-data Behavior m a = B { runBehavior' ::  m (BehaviorState m a) }
+data Behavior m a = B { runBehavior ::  m (a, Event m (Behavior m a)) }
 
-data BehaviorState m a = SameAsB (Behavior m a)
-                       | HeadTail a (Event m (Behavior m a))
+data BMemoOutcome m a = BMemoAgain a (Event m (m (BMemoOutcome m a)))
+                      | BSameAs (Behavior m a)
 
-runBehavior :: Monad m => Behavior m a -> m (a, Event m (Behavior m a)) 
-runBehavior (B m) = m >>= \case
-   SameAsB b -> runBehavior b
-   HeadTail h t -> return (h,t)
+
+memoB :: MonadIO m => m (BMemoOutcome m a) -> Behavior m a
+memoB m = B $ runMemo where
+  mem = unsafePerformIO $ newIORef m
+  {-# NOINLINE mem #-}  
+  runMemo = 
+    do m <- liftIO $ readIORef mem 
+       liftIO $ writeIORef mem (error "<<FRP loop>>")
+       c <- m
+       (res,m') <- case c of
+         BMemoAgain h t -> return ( (h, B runMemo <$ t), again h t)
+         BSameAs b -> do (h,t) <- runBehavior b
+                         return ((h,t), againSameAs b h t)
+       liftIO $ writeIORef mem m'
+       return res
+  again h Never = return (BMemoAgain h Never)
+  again h (E e) = e >>= \case
+            Left e' -> return (BMemoAgain h e')
+            Right x -> x
+  againSameAs _ h Never = return (BMemoAgain h Never)
+  againSameAs b h (E e) = e >>= \case
+            Left _ -> return (BSameAs b)
+            Right x -> return (BSameAs x)
+{-# NOINLINE memoB #-}  
 
 instance MonadIO m => Monad (Behavior m) where
-  return x = B $ return (HeadTail x  never)
+  return x = B $ return (x, never)
   m >>= f  = memoB $ bind m f where
-    bind m f = B $ do (h,t) <- runBehavior m
-                      let x = f h
-                      case t of
-                        Never -> return (SameAsB x)
-                        t'     -> do (fh,ft) <- runBehavior (f h)
-                                     return $ HeadTail fh (switchEv ft ((`bind` f) <$> t))
+    bind m f = 
+       do (h ,t ) <- runBehavior m
+          (fh,ft) <- runBehavior (f h)
+          let e   = switchEv ft ((`bind` f) <$> t)
+          return $ BMemoAgain fh e
 
                     
                    
@@ -80,31 +110,31 @@ instance MonadIO m => Monad (Behavior m) where
 -- switchEv (tl,bl) (tr,br) 
 --  | tr <= tl = (tr, br)
 --  | otherwise = (tl, bl `switch` (tr,br))                              
-switchEv :: MonadIO m => Event m (Behavior m a) -> Event m (Behavior m a) -> Event m (Behavior m a)
+switchEv :: MonadIO m => Event m (Behavior m a) -> Event m (m (BMemoOutcome m a)) -> Event m (m (BMemoOutcome m a))
 switchEv Never r = r
-switchEv l Never = l
-switchEv l r = b <$ minTime l r where
- b = B $ runEvent r >>= \case
-   Done rb -> return $ SameAsB rb
-   NotYet r' -> runEvent l >>= \case
-     Done lb -> do (hl,tl) <- runBehavior lb
-                   return $ HeadTail hl (switchEv tl r')
-     _  -> error "Cannot happen"
-     
+switchEv l Never = return . BSameAs <$> l
+switchEv l@(E lm)  r@(E rm) = b <$ minTime l r where
+ b = rm >>= \case
+      Right x -> x
+      Left r' -> lm >>= \case
+          Right lb -> do (h,t) <- runBehavior lb
+                         return $ BMemoAgain h (switchEv t r')
+                 
+
 switch :: MonadIO m => Behavior m a -> Event m (Behavior m a) -> Behavior m a
 switch b Never = b
-switch b e = memoB $ 
- B $ runEvent e >>= \case
-  Done x -> return $ SameAsB x
-  NotYet e -> do (h,t) <- runBehavior b
-                 return $ HeadTail h (switchEv t e)
+switch b (E e) = memoB $ e >>= \case
+  Right x  -> return $ BSameAs x
+  Left  e -> do (h,t) <- runBehavior b
+                let e' = return . BSameAs <$> e
+                return $ BMemoAgain h (switchEv t e')
 
 class Monad m => Plan m where
   plan :: Event m (m a) -> m (Event m a)
 
 whenJust :: (MonadIO m, Plan m) => Behavior m (Maybe a) -> Behavior m (Event m a)
 whenJust b = memoB (wj b) where
-  wj b = B $ liftM (\(h,t) -> HeadTail h t) (whenJustm b) where
+  wj b = liftM (\(h,t) -> BMemoAgain h t) (whenJustm b) where
     whenJustm b = 
      do (h, t) <- runBehavior b
         case h of
@@ -114,55 +144,9 @@ whenJust b = memoB (wj b) where
                        let t' = en >>= snd
                        return (h, t')
 
-againE :: Monad m => EventState m a -> Event m a
-againE (SameAs Never) = Never
-againE (NotYet Never) = Never
-againE x@(Done a)     = E $ return x
-againE (NotYet e)     = E $ runEvent' e 
-againE (SameAs e)     = E $ runEvent' e >>= \case
-                SameAs e' -> runEvent'(againE (SameAs e'))
-                _         -> return $ SameAs e
 
 
-againB :: Monad m =>  BehaviorState m a -> Behavior m a
-againB (HeadTail h t) = B $ runEvent t >>= \case
-                               Done x -> runBehavior' x
-                               NotYet t' -> return $ HeadTail h t'
-againB (SameAsB b) = B $ runBehavior' b >>= \case
-                HeadTail h t -> return $ SameAsB b
-                SameAsB b' -> runBehavior' (againB (SameAsB b'))
 
-class Ord (Round m) => GetRound m where
-  type Round m 
-  getRound :: m (Round m) 
-
-memoB :: MonadIO m => Behavior m a -> Behavior m a
-memoB b = B $ runMemo where
-  mem = unsafePerformIO $ newIORef b
-  {-# NOINLINE mem #-}  
-  runMemo = 
-    do es <- liftIO $ readIORef mem 
-       res <- runBehavior' es
-       liftIO $ writeIORef mem (againB res)
-       return res
-{-# NOINLINE memoB #-}  
-
-memoE :: MonadIO m => Event m a -> Event m a
-memoE Never = Never
-memoE e = E $ runMemo where
-  mem = unsafePerformIO $ newIORef e
-  {-# NOINLINE mem #-}  
-  runMemo = 
-    do es <- liftIO $ readIORef mem 
-       case es of
-         Never -> return (NotYet Never)
-         E e   -> do res <- e
-                     liftIO $ writeIORef mem (againE res)
-                     return res
-{-# NOINLINE memoE #-}  
-
-instance MonadIO m => Functor (Event m) where fmap = liftM
-instance MonadIO m => Applicative (Event m) where pure = return ; (<*>) = ap
 
 instance MonadIO m => Functor (Behavior m) where fmap = liftM
 instance MonadIO m => Applicative (Behavior m) where pure = return ; (<*>) = ap

@@ -8,16 +8,14 @@ module Control.FRPNowImpl.FRPNow(
 import Control.Monad
 import Control.Applicative
 import qualified Control.FRPNowImpl.Now as N
-import qualified Control.FRPNowImpl.Event as E
-import qualified Control.FRPNowImpl.Behavior as B
 
 
 newtype Now       a = N { getN :: N.Now       N.Global a } deriving (Functor,Monad,Applicative)
-newtype Event     a = E { getE :: E.Event     N.Global a } deriving (Functor,Monad,Applicative)
-newtype Behavior a = B { getB :: B.Behavior N.Global a } deriving (Functor,Monad,Applicative)
+newtype Event     a = E { getE :: N.Event     N.Global a } deriving (Functor,Monad,Applicative)
+newtype Behavior a = B { getB :: N.Behavior N.Global a } deriving (Functor,Monad,Applicative)
 
 never :: Event a
-never = E $ E.never
+never = E $ N.never
 
 evNow :: Event a -> Now (Maybe a)
 evNow (E e) = N $ N.evNow e
@@ -39,13 +37,13 @@ planIOWeak :: Event (Now a) -> Now (Event a)
 planIOWeak (E e) = N $ E <$> N.planIOWeak (getN <$> e)
 
 curIO :: Behavior a -> Now a
-curIO (B a) = N $ B.curIO a
+curIO (B a) = N $ N.curIO a
 
 switch :: Behavior a -> Event (Behavior a) -> Behavior a
-switch (B b) (E e) = B $ b `B.switch` (getB <$> e)
+switch (B b) (E e) = B $ b `N.switch` (getB <$> e)
 
 whenJust :: Behavior (Maybe a) -> Behavior (Event a)
-whenJust (B b) = B $ E <$> B.whenJust b
+whenJust (B b) = B $ E <$> N.whenJust b
 
 
 runNow :: Now (Event a) -> IO a
