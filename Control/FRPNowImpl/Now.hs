@@ -236,7 +236,7 @@ planIO :: Event s (Now s a) -> Now s (Event s a)
 planIO  = planIO' (\_ y -> makeStrongRef y)
 
 planIOWeak :: Event s (Now s a) -> Now s (Event s a)
-planIOWeak  = planIO' makeWeakRefKey
+planIOWeak  = planIO -- planIO' makeWeakRefKey
 
 planIOWeakKey :: k -> Event s (Now s a) -> Now s (Event s a)
 planIOWeakKey k =  planIO' (\_ y -> makeWeakRefKey k y)
@@ -267,20 +267,25 @@ addStrongRef p =
     syncIO $ modifyIORef' (strongRefs env) (SomeMVar p :) 
 
 
-tryPlan :: Ref (Plan s) -> Now s ()
-tryPlan r = syncIO (deRef r) >>= \case
-   Just (Plan (E n)) -> n >>= \case
+tryPlan :: (Plan s,  Ref (Plan s)) -> Now s ()
+tryPlan (Plan (E n), r) = n >>= \case
          Right n  -> return ()
          Left e'  -> addPlan r
-   Nothing -> return ()
+
+makeStrongRefs :: [Ref (Plan s)] -> Now s [(Plan s, Ref (Plan s))]
+makeStrongRefs l = catMaybes <$> mapM makeStrongRef l where
+  makeStrongRef r = syncIO (deRef r) >>= return . \case
+                       Just p  -> Just (p,r)
+                       Nothing -> Nothing
 
 tryPlans :: Now s ()
 tryPlans = 
   do env <- getEnv
      pl <- syncIO $ readIORef (plans env)
-     --syncIO $ putStrLn (show (length pl))
      syncIO $ writeIORef (plans env) []
-     mapM_ tryPlan pl
+     --syncIO $ putStrLn (show (length pl))
+     pl' <- makeStrongRefs pl
+     mapM_ tryPlan pl'
 
 runFRPLocal :: (forall s. Now s (Event s a)) -> IO a
 runFRPLocal m = withClock $ \c -> 
