@@ -236,7 +236,7 @@ planIO :: Event s (Now s a) -> Now s (Event s a)
 planIO  = planIO' (\_ y -> makeStrongRef y)
 
 planIOWeak :: Event s (Now s a) -> Now s (Event s a)
-planIOWeak  = planIO -- planIO' makeWeakRefKey
+planIOWeak  = planIO' makeWeakRefKey
 
 planIOWeakKey :: k -> Event s (Now s a) -> Now s (Event s a)
 planIOWeakKey k =  planIO' (\_ y -> makeWeakRefKey k y)
