@@ -4,7 +4,7 @@
 module Control.Monad.Swap where
 import Control.Monad
 import Control.Applicative
-
+import Control.Monad.Fix
 newtype (f :. g) x = Comp (f (g x))
 
 open (Comp x) = x
@@ -33,11 +33,11 @@ class Swap f g where
 instance Swap a a where
   swap = id
 
--- actually only requirement on g is pointer functor and f functor
+-- actually only requirement on g is pointed functor and f functor
 liftLeft :: (Monad f, Monad g) => f x -> (f :. g) x 
 liftLeft = close . liftM return 
 
--- actually only requirement on f is pointer functor 
+-- actually only requirement on f is pointed functor 
 liftRight :: Monad f => g x -> (f :. g) x 
 liftRight  = close . return 
 
@@ -54,7 +54,18 @@ instance (Swap g f, Monad f, Monad g) => Monad (f :. g) where
   -- see (Composing Monads, Jones and Duponcheel) for proof
   return  = close . return . return
   m >>= f = joinComp (fmap2m f m)
-
+{- ?? 
+instance (Swap g f, MonadFix f, MonadFix g) => MonadFix (f :. g) where
+  -- f :: (x -> (f :. g) x ) 
+  -- swap
+  -- open . f :: (x -> f (g x))
+  -- swap . open . f :: x -> g (f x)
+  -- (g (f x) -> f (g x))
+  -- (x -> f x) -> f x
+  -- (x -> g x) -> g x
+  -- (x -> (f :. g) x) -> (f :. g) x
+  mfix f = mfix (
+-}
 -- anoyance that Monad is not a subclass of functor
 fmap2m f = close . liftM (liftM f) . open
 
@@ -69,6 +80,28 @@ joinFlip =  liftM join . join . liftM swap
 -- b . e 
 
 
+
+
 instance (Applicative b, Applicative e) => Applicative (b :. e) where
    pure = close . pure . pure
    x <*> y = close $ (<*>) <$> open x <*> open y  
+
+newtype Reader r a = Reader { runReader :: r -> a }
+
+instance Monad (Reader r) where
+  return x = Reader $ \_ -> x
+  m >>= f  = Reader $ \r -> runReader (f (runReader m r)) r
+
+instance MonadFix (Reader r) where
+  mfix f = Reader $ \r -> let x = runReader (f x) r in x
+
+instance Monad f => Swap f (Reader r) where
+  swap g = Reader $ \r -> liftM (\x -> runReader x r) g
+
+class Monad m => Ask m r where
+  ask :: m r
+
+instance Ask (Reader r) r where
+  ask = Reader id
+instance (Monad g, Ask f r, Swap g f) => Ask (f :. g) r where
+  ask = liftLeft ask

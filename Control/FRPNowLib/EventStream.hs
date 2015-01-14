@@ -1,7 +1,7 @@
 {-# LANGUAGE DeriveFunctor,FlexibleInstances,ConstraintKinds,ViewPatterns,NoMonomorphismRestriction,MultiParamTypeClasses ,FlexibleContexts,TypeOperators, LambdaCase, ScopedTypeVariables, Rank2Types, GADTs, TupleSections,GeneralizedNewtypeDeriving, UndecidableInstances #-}
 
 module Control.FRPNowLib.EventStream
-(EventStream(..), next, nextSim, emptyEs, repeatEv, merge, switchEs, singletonEs, fmapB, filterJusts, foldB, fold, during, sampleOn, parList, scanlEv, foldr1Ev, foldrEv, foldrSwitch, changes, EventStreamM, emit,runEventStreamM, printAll, repeatEvN)
+(EventStream(..), next, nextSim, emptyEs, repeatEv, merge, switchEs, singletonEs, fmapB, filterJusts, foldB, fold, during, sampleOn, parList, scanlEv, last,filterTrue, bufferStream, foldr1Ev, foldrEv, foldrSwitch, changes, EventStreamM, emit,runEventStreamM, printAll, repeatEvN)
   where
 
 import Control.FRPNowImpl.FRPNow
@@ -10,7 +10,7 @@ import Data.Maybe
 import Control.Monad hiding (when)
 import Control.Applicative hiding (empty)
 import Control.Monad.Swap
-import Data.Sequence hiding (reverse,scanl)
+import Data.Sequence hiding (reverse,scanl,take)
 import Prelude hiding (until,length)
 import Debug.Trace
 
@@ -102,6 +102,7 @@ singletonEs :: Event a -> EventStream a
 singletonEs e = Es $ pure (fmap (\x -> [x]) e) `switch` fmap (const (getEs emptyEs)) e
 
 
+
 fmapB :: Behavior (a -> b) -> EventStream a -> EventStream b
 fmapB f es = Es $ loop where
  loop =  
@@ -126,6 +127,11 @@ filterJusts es = Es loop where
   loop =  do e <- nextJusts es
              pure e `switch` (loop <$ e)
 
+filterTrue :: EventStream Bool -> EventStream ()
+filterTrue es = filterJusts (toJust <$> es)
+  where toJust True = Just ()
+        toJust False = Nothing
+
 
 filterMapB :: Behavior (a -> Maybe b) -> EventStream a -> EventStream b
 filterMapB f e = filterJusts $ fmapB f e
@@ -145,10 +151,9 @@ scanlEv :: (a -> b -> a) -> a -> EventStream b -> Behavior (EventStream a)
 scanlEv f i es = Es <$> loop i where
  loop i = 
   do e  <- getEs es
-     ev <- plan (fmap (nxt i) e)
-     let i' = scanl f i <$> e
-     return (pure i' `switch` ev)
- nxt i l = loop (foldl f i l)
+     let e' = (\(h : t) -> tail $ scanl f i (h : t)) <$> e
+     ev <- plan (loop . last <$> e')
+     return (pure e' `switch` ev)
 
 foldr1Ev :: (a -> Event b -> b) -> EventStream a -> Behavior (Event b)
 foldr1Ev f es = loop where
@@ -175,6 +180,8 @@ fold f i = foldB (pure i) f'
 parList :: EventStream (BehaviorEnd b ()) -> Behavior (Behavior [b])
 parList = foldB (pure []) (flip (.:)) 
 
+bufferStream :: Int -> EventStream a -> Behavior (EventStream [a])
+bufferStream i = scanlEv (\t h -> take i (h : t)) []
 
 changes :: Eq a => Behavior a -> EventStream a
 changes = repeatEv . change 

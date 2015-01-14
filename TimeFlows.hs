@@ -18,10 +18,11 @@ import Control.Concurrent -- for threaddelay
 
 main = do screen <- initSDL
           runNow $
-              do (evs, clock) <- getEventsTime (1.0 / 60.0)
+              do evs <- getEvents 
+                 clock <- getClock (1.0 / 60.0)
                  mousePos <- cur $ toMousePos evs
                  buttons  <- cur $ toMouseButtonsDown evs
-                 bxs <- cur (timeflows 15 0.05 clock mousePos buttons)
+                 bxs <- cur (timeflows 20 0.05 clock mousePos buttons)
                  drawAll screen bxs
                  return never
 
@@ -29,7 +30,7 @@ main = do screen <- initSDL
 iteratenM :: Monad m => (a -> m a) -> a -> Integer -> m [a]
 iteratenM f a n 
   | n <= 0 = return []
-  | otherwise = do h <- f a 
+  | otherwise = do h <- f a  
                    t <- iteratenM f h (n - 1)
                    return (h : t)
 

@@ -139,11 +139,12 @@ getEvents = Es <$> loop where
             e' <- planIO (loop <$ e)
             return (pure e `switch` e')
 
+{-
 getEventsTime ::  Double -> Now (EventStream SDL.Event , Behavior Time )
 getEventsTime delay = 
   do (a,b) <- loop
      return (Es a, b) where
-  loop = do e <-  asyncOS (ioGetEventsTimeout delaymillis)
+  loop = do e <-  asyncIO (ioGetEventsTimeout delaymillis)
             e' <- planIO (loop <$ e)
             let evs = fst <$> e'
             let timeb = snd <$> e'
@@ -152,6 +153,7 @@ getEventsTime delay =
             --syncIO (putStrLn (show ti))
             return (pure e `switch` evs, pure ti `switch` timeb)
   delaymillis = round (delay * 1000.0)
+-}
 
 
 
@@ -162,7 +164,7 @@ drawAll screen b = loop where
   loop =
    do v <- cur b
       e <- cur $ change b
-      e' <- asyncOS $ drawBoxes screen v
+      e' <- asyncIO $ drawBoxes screen v
       planIO (fmap (const loop) (e >> e'))
       return ()
       
