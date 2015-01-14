@@ -127,8 +127,8 @@ filterJusts es = Es loop where
   loop =  do e <- nextJusts es
              pure e `switch` (loop <$ e)
 
-filterTrue :: EventStream Bool -> EventStream ()
-filterTrue es = filterJusts (toJust <$> es)
+filterEv :: EventStream Bool -> EventStream ()
+filterEv es = filterJusts (toJust <$> es)
   where toJust True = Just ()
         toJust False = Nothing
 
