@@ -95,6 +95,13 @@ sampleUntil b end  = loop [] where
                        join <$> plan (loop ss' <$ c)  
                     
 
+prev :: Eq a => a -> Behavior a -> Behavior (Behavior a)
+prev i b = loop i where
+ loop i = do c   <- b
+             e   <- when ((/= c) <$> b)
+             e'  <- plan (loop c <$ e)
+             return (pure i `switch` e')
+
 snapshot :: Event a -> Behavior b -> Behavior (Event (a,b))
 snapshot e b = plan $ (\x -> (x,) <$> b) <$> e
 

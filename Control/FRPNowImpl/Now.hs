@@ -5,6 +5,7 @@ import Control.Applicative
 import Control.Concurrent
 import Control.Concurrent.MVar
 import Control.Monad
+import Control.Monad.Fix
 import Control.Monad.Reader
 import Data.Maybe
 import Data.TIVar
@@ -130,6 +131,8 @@ instance Monad (Behavior s) where
           let e   = switchEv ft ((`bind` f) <$> t)
           return $ BMemoAgain fh e
 
+instance MonadFix (Behavior s) where
+  mfix f = B $ mfix (\x -> runBehavior (f (fst x)))
                     
                    
 -- associative! 
@@ -195,7 +198,7 @@ data Env s = Env {
   -- mvar error
  }
 
-newtype Now s a = Now { runNow' ::  ReaderT (Env s) IO a } deriving (Functor, Applicative, Monad)
+newtype Now s a = Now { runNow' ::  ReaderT (Env s) IO a } deriving (Functor, Applicative, Monad, MonadFix)
 
 getEnv :: Now s (Env s)
 getEnv = Now ask

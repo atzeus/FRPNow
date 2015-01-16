@@ -101,6 +101,9 @@ lerp :: Double -> Double -> Double -> Double
 lerp i l r = r * i' + l * (1 - i') where
   i' = min 1.0 (max 0.0 i)
 
+bool2Color True  = green
+bool2Color False = red 
+
 mix :: Color -> Color -> Color
 mix l r = mixi 0.5 l r 
 
