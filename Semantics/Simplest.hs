@@ -17,6 +17,9 @@ switch :: Monad m=>  Behavior m a -> Event m (Behavior m a) -> Behavior m a
 switch b e = B $ runE e >>= runB . fromMaybe b
 
 class Monad m => Plan m where
+  -- perform action every round (starting now), until it returns
+  -- Just, the resulting event occurs then and carries the value
+  -- from the Just.
   everyRound :: m (Maybe a) -> m (Event m a)
 
 whenJust :: Plan m => Behavior m (Maybe a) -> Behavior m (Event m a)
