@@ -4,29 +4,17 @@ module Control.FRPNowImpl.SOS where
 import Control.Applicative
 import Control.Monad
 
-data Event m a = E { runEvent :: m (Either (Event m a) a) }
+data Event m a = E { runEvent :: m (Maybe a) }
 
 never :: Monad m => Event m a
-never = E (return (Left never))
+never = E (return Nothing)
 
 instance Monad m => Monad (Event m) where
-  return x = E $ return $ Right x
+  return x = E $ return (Just x)
   m >>= f = E $ runEvent m >>= \case
-      Left  m' -> return $ Left $ m' >>= f
-      Right x  -> runEvent (f x)
+      Nothing  -> return Nothing
+      Just x  -> runEvent (f x)
 
-{- This is symmetric! 
-  
- ( note that first :: Event a -> Event a -> Event a
-    is _not_ symmetric, have to decide in case  
-    of simultaneity )
--} 
-minTime :: Monad m => Event m a -> Event m b -> Event m ()
-minTime (E lm) (E rm) = E $ rm >>= \case
-  Right _ -> return $ Right ()
-  Left r' -> lm >>= \case  
-       Right _ -> return $ Right ()
-       Left l' -> return $ Left $ minTime l' r'
 
 data Behavior m a = B { runBehavior :: m (a, Event m (Behavior m a)) }
 
@@ -41,20 +29,18 @@ instance Monad m => Monad (Behavior m) where
 --  | tr <= tl = (tr, br)
 --  | otherwise = (tl, bl `switch` (tr,br))                              
 switchEv :: Monad m => Event m (Behavior m a) -> Event m (Behavior m a) -> Event m (Behavior m a)
-switchEv l r = b <$ minTime l r where
- b = B $ runEvent r >>= \case
-   Right rb -> runBehavior rb
-   Left r' -> runEvent l >>= \case
-     Right lb -> do (hl,tl) <- runBehavior lb
-                    return (hl, switchEv tl r')
-     Left l' -> error "Cannot happen"
+switchEv l r = E $ runEvent r >>= \case
+   Just rb -> return $ Just rb
+   Nothing -> runEvent l >>= return . \case
+     Just lb -> Just (switch lb r)
+     Nothing -> Nothing
      
 switch :: Monad m=>  Behavior m a -> Event m (Behavior m a) -> Behavior m a
 switch b e = 
  B $ runEvent e >>= \case
-  Right x -> runBehavior x
-  Left e -> do (h,t) <- runBehavior b
-               return (h, switchEv t e)
+  Just x  -> runBehavior x
+  Nothing -> do (h,t) <- runBehavior b
+                return (h, switchEv t e)
 
 class Monad m => Plan m where
   plan :: Event m (m a) -> m (Event m a)
