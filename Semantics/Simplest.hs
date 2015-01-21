@@ -2,28 +2,29 @@
 
 import Control.Applicative
 import Control.Monad
+import Data.Maybe
 
-data Event m a = E { runEvent :: m (Maybe a) }
+data Event m a = E { runE :: m (Maybe a) }
 
 never :: Monad m => Event m a
 never = E (return Nothing)
 
 instance Monad m => Monad (Event m) where
   return x = E $ return (Just x)
-  m >>= f = E $ runEvent m >>= maybe (return Nothing) (runEvent . f)
+  m >>= f = E $ runE m >>= maybe (return Nothing) (runE . f)
 
-data Behavior m a = B { runBehavior :: m a }
+data Behavior m a = B { runB :: m a }
 
 instance Monad m => Monad (Behavior m) where
   return x = B $ return x
-  m >>= f  = B $ runBehavior m >>= runBehavior . f
+  m >>= f  = B $ runB m >>= runB . f
 
 switch :: Monad m=>  Behavior m a -> Event m (Behavior m a) -> Behavior m a
-switch b e = B $ runEvent e >>= runBehavior . fromMaybe b
+switch b e = B $ runE e >>= runB . fromMaybe b
 
 class Monad m => Plan m where
-  everyRound :: m (Maybe a) -> m (Event a)
+  everyRound :: m (Maybe a) -> m (Event m a)
 
 whenJust :: Plan m => Behavior m (Maybe a) -> Behavior m (Event m a)
-whenJust b = B $ everyRound (runBehavior b) where
+whenJust b = B $ everyRound (runB b) where
 
