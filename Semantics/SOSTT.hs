@@ -14,10 +14,11 @@ class Monad m => MemoTime m where
 data Event m a = E (m (Either (Event m a) a))
                | Never
 
-toEv :: Monad m => m (Maybe a) -> Event m a
-toEv m = E $ m >>= return . \case
-   Just x -> Right x
-   Nothing -> Left (toEv m)
+maybeToEv :: Monad m => m (Maybe a) -> Event m a
+maybeToEv m = let x = E $ m >>= return . \case
+                       Just x -> Right x
+                       Nothing -> Left x
+              in x
 
 runEvent Never = return $ Left Never
 runEvent (E m) = m
