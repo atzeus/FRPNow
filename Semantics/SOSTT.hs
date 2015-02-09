@@ -7,9 +7,9 @@ import Control.Monad
 class Monad m => Plan m where
   plan     :: Event m (m a) -> m (Event m a)
 
-class Monad m => MemoTime m where
-  memoTime :: (x -> m x) -> m x -> m x
-  memoTime _ m = m
+
+magicShareState ::  (x -> m x) -> m x -> m x
+magicShareState _ m = m
 
 data Event m a = E (m (Either (Event m a) a))
                | Never
@@ -27,13 +27,13 @@ againE :: Monad m => Either (Event m a) a -> m (Either (Event m a) a)
 againE (Right x) = return $ Right x
 againE (Left m)  = runEvent m
 
-memoE :: MemoTime m => m (Either (Event m a) a) -> m (Either (Event m a) a)
-memoE = memoTime againE
+memoE :: m (Either (Event m a) a) -> m (Either (Event m a) a)
+memoE = magicShareState againE
 
 never :: Event m a
 never = Never
 
-instance MemoTime m => Monad (Event m) where
+instance Monad (Event m) where
   return x = E $ return $ Right x
   Never >>= f = Never
   (E m) >>= f = E $ memoE $ m >>= \case
@@ -59,10 +59,10 @@ againB (h, t) = runEvent t >>= \case
                  Left m -> return (h,m)
                  Right x -> runBehavior x
 
-memoB :: MemoTime m => m (a, Event m (Behavior m a)) -> m (a, Event m (Behavior m a))
-memoB = memoTime againB
+memoB :: m (a, Event m (Behavior m a)) -> m (a, Event m (Behavior m a))
+memoB = magicShareState againB
 
-instance MemoTime m => Monad (Behavior m) where
+instance Monad (Behavior m) where
   return x = B $ return (x, never)
   m >>= f  = B $ memoB $ 
      do (h,t) <- runBehavior m
@@ -84,10 +84,10 @@ whenJust b = B $ memoB $
                     return (en >>= fst, en >>= snd)
 
 
-instance MemoTime m => Functor (Event m) where fmap = liftM
-instance MemoTime m => Applicative (Event m) where pure = return ; (<*>) = ap
+instance Functor (Event m) where fmap = liftM
+instance Applicative (Event m) where pure = return ; (<*>) = ap
 
-instance MemoTime m => Functor (Behavior m) where fmap = liftM
-instance MemoTime m => Applicative (Behavior m) where pure = return ; (<*>) = ap
+instance Functor (Behavior m) where fmap = liftM
+instance Applicative (Behavior m) where pure = return ; (<*>) = ap
 
 
