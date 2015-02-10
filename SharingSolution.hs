@@ -3,6 +3,8 @@ import Debug.Trace
 
 import Control.Applicative
 
+-- Non-solution: Scope type variables
+
 data P s a = P a  
 
 instance Functor (P s) where
@@ -22,6 +24,10 @@ getPhant (P i) = i
 -- Hallo only printed once: too much sharing!
 main1 = do putStrLn (show $ getPhant bla)
            putStrLn (show $ getPhant bla)   
+
+-- Solution : Keep context abstract
+-- implementation can safely do unsafeperformIO tricks 
+-- without danger of oversharing!
 
 bla2 :: Applicative f => f Int
 bla2 = let x = pure (trace "hallo" $ 1)
