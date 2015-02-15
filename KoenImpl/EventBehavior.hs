@@ -1,93 +1,72 @@
-
+{-# LANGUAGE LambdaCase #-}
 module EventBehavior where
 
-import Control.Applicative
+--import Control.Applicative
 import Control.Monad
 
-class Monad m => Plan m where
-  plan     :: Event m (m a) -> m (Event m a)
+data E m a = E (m (E m a))
+           | Occ a
+           | Never
 
-
-magicShareState ::  (x -> m x) -> m x -> m x
-magicShareState _ m = m
-
-data Event m a = E (m (Either (Event m a) a))
-               | Never
-
-maybeToEv :: Monad m => m (Maybe a) -> Event m a
-maybeToEv m = let x = E $ m >>= return . \z -> case z of
-                       Just x -> Right x
-                       Nothing -> Left x
-              in x
-
-runEvent Never = return $ Left Never
-runEvent (E m) = m
-
-againE :: Monad m => Either (Event m a) a -> m (Either (Event m a) a)
-againE (Right x) = return $ Right x
-againE (Left m)  = runEvent m
-
-memoE :: Monad m => m (Either (Event m a) a) -> m (Either (Event m a) a)
-memoE = magicShareState againE
-
-never :: Event m a
+never :: E m a
 never = Never
 
-instance Monad m => Monad (Event m) where
-  return x = E $ return $ Right x
-  Never >>= f = Never
-  (E m) >>= f = E $ memoE $ m >>= \x -> case x of
-      Left m  -> return (Left $ m >>= f)
-      Right x -> runEvent (f x) 
+(<$>) = liftM
+(<$) = liftM . const
 
-minTime :: Monad m => Event m a -> Event m b -> Event m ()
-minTime Never r = () <$ r
-minTime l Never = () <$ l
-minTime (E l) (E r) = E $ memoE $ 
- r >>= \x -> case x of
-   Right _ -> return (Right ())
-   Left r  -> l >>= \x -> case x of 
-     Right _ -> return (Right ())
-     Left l  -> return (Left (minTime l r))
+instance Monad m => Monad (E m) where
+  return = Always 
+  Never      >>= f = Never
+  (Always x) >>= f = f x
+  (E m)      >>= f = memoE ((>>= f) <$> m)
+
+minTime :: Event a -> Event b -> Event ()
+minTime Never r      = () <$ r
+minTime l Never      = () <$ l
+minTime (Always _) _ = Always ()
+minTime _ (Always _) = Always ()
+minTime (E m) (E n)  = E $ minTime <$> m <*> n
+
 
 -- Behaviors
+-- strictness alert: do not runEvent the tail of a behavior we just got!
 
-data Behavior m a = B { runBehavior ::  m (a, Event m (Behavior m a)) }
+data B m a = B (m (a, (E m (B m a)))
+           | Const x
 
-againB :: Monad m => (a, Event m (Behavior m a)) -> m (a, Event m (Behavior m a))
-againB (h, t) = runEvent t >>= \x -> case x of
-                 Left m -> return (h,m)
-                 Right x -> runBehavior x
+runB :: B m a -> m (a, E m (B m a))
+runB (Const x) = return (x, never)
+runB (B m)     = m
 
-memoB :: Monad m => m (a, Event m (Behavior m a)) -> m (a, Event m (Behavior m a))
-memoB = magicShareState againB
+instance Monad m => Monad (B m) where
+  return = Const
+  (Const x) >>= f = f x 
+  (B m)     >>= f = memoB $
+    do (h,t) <- m 
+       (fh,th) <- runB (f h)
+       return (fh, switchEv th ((>>= f) <$> t))
+            
+switch :: Monad m =>  B m a -> E m (B m a) -> B m a
+switch b Never       = b
+switch _ (Always b)  = b
+switch b (E e)   = memoB $ e >>= \case
+   Never    -> runB b
+   Always x -> runB x
+   e'       -> do (h,t) <- runB b
+                  return (h, switchEv t e')
 
-instance Monad m => Monad (Behavior m) where
-  return x = B $ return (x, never)
-  m >>= f  = B $ memoB $ 
-     do (h,t) <- runBehavior m
-        runBehavior $ f h `switch` ((>>= f) <$> t)
+switchEv :: Monad m => E m (B m a) -> E m (B m a) -> E m (B m a)
+switchEv l r = (pure undefined `switch` l `switch` r) <$> 
+               (minTime l r)
 
-switch :: Monad m =>  Behavior m a -> Event m (Behavior m a) -> Behavior m a
-switch b Never = b
-switch b (E e) = B $ memoB $ e >>= \x -> case x of
-  Right x  -> runBehavior x
-  Left e   -> do (h,t) <- runBehavior b
-                 return (h, switch b e <$ minTime t e)
 
-whenJust :: Plan m => Behavior m (Maybe a) -> Behavior m (Event m a)
-whenJust b = B $ memoB $ 
-  do (h, t) <- runBehavior b
+whenJust :: Plan m => B m (Maybe a) -> B m (E m a)
+whenJust (Const Nothing)  = pure never
+whenJust (Const (Just x)) = pure (pure x)
+whenJust (B b) = memoB $ 
+  do (h, t) <- b
      case h of
       Just x -> return (return x, whenJust <$> t)
       Nothing -> do en <- plan (runBehavior . whenJust <$> t)
                     return (en >>= fst, en >>= snd)
-
-
-instance Monad m => Functor (Event m) where fmap = liftM
-instance Monad m => Applicative (Event m) where pure = return ; (<*>) = ap
-
-instance Monad m => Functor (Behavior m) where fmap = liftM
-instance Monad m => Applicative (Behavior m) where pure = return ; (<*>) = ap
-
 
