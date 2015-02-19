@@ -1,4 +1,4 @@
-{-# LANGUAGE TypeOperators,MultiParamTypeClasses, FlexibleInstances,TypeSynonymInstances, LambdaCase, ExistentialQuantification, Rank2Types, GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE TupleSections,TypeOperators,MultiParamTypeClasses, FlexibleInstances,TypeSynonymInstances, LambdaCase, ExistentialQuantification, Rank2Types, GeneralizedNewtypeDeriving #-}
 module TimeEnv(SpaceTime, async, runFRP) where
 
 import Control.Monad.Writer hiding (mapM_)
@@ -13,6 +13,7 @@ import Data.IORef
 import Data.Sequence
 import Data.Foldable
 import Data.Maybe
+import System.IO.Unsafe -- only for unsafeMemoAgain at the bottom
 
 import Prelude hiding (mapM_)
 
@@ -22,22 +23,23 @@ import EventBehavior
 import Swap
 import ConcFlag
 
-type Event = E TimeEnv 
-type Behavior = B TimeEnv
+type Event = E RealTimeEnv 
+type Behavior = B RealTimeEnv
 
 
 data APlan = forall a. APlan (Ref (Event a))
 type Plans = Seq APlan
 
 
-newtype TimeEnv a = TE ( ReaderT (Flag,Clock,Round) (WriterT Plans IO) a)
+newtype RealTimeEnv a = TE ( ReaderT (Flag,Clock,Round) (WriterT Plans IO) a)
  deriving (Monad,Applicative,Functor,MonadWriter Plans ,MonadReader (Flag,Clock,Round), MonadIO)
 
 
 -- Plan stuff
 
-instance Plan TimeEnv where
- plan = planRef makeWeakRef 
+instance TimeEnv RealTimeEnv where
+ planM = planRef makeWeakRef 
+ again = unsafeMemoAgain
 
 planRef makeRef e   = runEvent e >>= \case
   Never -> return Never
@@ -49,7 +51,7 @@ planRef makeRef e   = runEvent e >>= \case
               return res
 
 
-tryAgain :: IORef (Either (Event (TimeEnv a)) a) -> Event a
+tryAgain :: IORef (Either (Event (RealTimeEnv a)) a) -> Event a
 tryAgain r = E $ liftIO (readIORef r) >>= \case 
   Right x -> return (Occ x)
   Left e -> runEvent e >>= \case
@@ -90,7 +92,7 @@ tiVarToEv ti = E $
       Just a -> return (Occ a)
       Nothing -> return $ tiVarToEv ti
 
-sampleB :: Now a -> TimeEnv a
+sampleB :: Now a -> RealTimeEnv a
 sampleB m = do (ST x, _) <- runB (open m)
                return x
 
@@ -102,21 +104,21 @@ instance Swap Now Event where
 -- Start main loop
 data SomeEvent = forall a. SomeEvent (Event a)
 
-tryPlan :: APlan -> SomeEvent -> TimeEnv ()
+tryPlan :: APlan -> SomeEvent -> RealTimeEnv ()
 tryPlan p (SomeEvent e) = runEvent e >>= \case
              Occ  _  -> return ()
              Never   -> return ()
              E _     -> tell (singleton p)
 
 
-makeStrongRefs :: Plans -> TimeEnv [(APlan, SomeEvent)] 
+makeStrongRefs :: Plans -> RealTimeEnv [(APlan, SomeEvent)] 
 makeStrongRefs pl = catMaybes <$> mapM makeStrongRef (toList pl) where
- makeStrongRef :: APlan -> TimeEnv (Maybe (APlan, SomeEvent))
+ makeStrongRef :: APlan -> RealTimeEnv (Maybe (APlan, SomeEvent))
  makeStrongRef (APlan r) = liftIO (deRef r) >>= return . \case
          Just e  -> Just (APlan r, SomeEvent e)
          Nothing -> Nothing
 
-runRound :: Event a -> Plans -> TimeEnv (Maybe a)
+runRound :: Event a -> Plans -> RealTimeEnv (Maybe a)
 runRound e pl = 
   do pl' <- makeStrongRefs pl 
      mapM_ (uncurry tryPlan) pl'
@@ -124,7 +126,7 @@ runRound e pl =
        Occ x -> Just x
        _     -> Nothing
 
-runTimeEnv :: Flag -> Clock -> TimeEnv a -> IO (a, Plans)
+runTimeEnv :: Flag -> Clock -> RealTimeEnv a -> IO (a, Plans)
 runTimeEnv f c (TE m) = 
  do r <- curRound c
     runWriterT (runReaderT m (f,c,r))
@@ -144,4 +146,19 @@ runFRP m = do f <- newFlag
           Nothing -> loop f c ev pl'
               
 
+-- Memo stuff:
 
+unsafeMemoAgain :: (x -> RealTimeEnv x) -> RealTimeEnv x -> RealTimeEnv x
+unsafeMemoAgain again m = unsafePerformIO $ runMemo <$> newIORef (Nothing, m) where
+   runMemo mem = 
+    do (_,_,r) <- ask
+       (v,m) <- liftIO $ readIORef mem 
+       res <- case v of
+         Just (p,val) -> 
+           case compare p r of
+            LT -> m
+            EQ -> return val
+            GT -> error "non monotonic sampling!!"
+         Nothing -> m
+       liftIO $ writeIORef mem (Just (r,res), again res)
+       return res

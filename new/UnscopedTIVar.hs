@@ -9,7 +9,16 @@ import Control.Applicative
 import System.IO.Unsafe
 import Data.Unique
 
-data Round = Round Unique Integer deriving (Ord,Eq)
+data Round = Round Unique Integer 
+
+instance Eq Round where
+  (Round lu lt) == (Round ru rt) | lu == ru  = lt == rt
+                                 | otherwise = error "Rounds not from same clock!"
+
+instance Ord Round where
+  compare (Round lu lt) (Round ru rt)
+     | lu == ru  = compare lt rt
+     | otherwise = error "Rounds not from same clock!"
 
 data TIVar a = TIVar Unique (MVar (Either Clock (Round, a)))
 data Clock = Clock Unique (MVar Integer)
@@ -32,6 +41,7 @@ curRound (Clock u c) = Round u <$> readMVar c
 endRound :: Clock -> IO ()
 endRound (Clock u c) = do i <- takeMVar c
                           putMVar c (i+1)
+
 
 observeAt :: TIVar a -> Round -> Maybe a
 observeAt (TIVar uv m) (Round ur t) 
