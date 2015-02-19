@@ -1,7 +1,7 @@
 {-# LANGUAGE DeriveFunctor,FlexibleInstances,ConstraintKinds,ViewPatterns,NoMonomorphismRestriction,MultiParamTypeClasses ,FlexibleContexts,TypeOperators, LambdaCase, ScopedTypeVariables, Rank2Types, GADTs, TupleSections,GeneralizedNewtypeDeriving, UndecidableInstances #-}
 
 module Control.FRPNowLib.EventStream
-(EventStream(..), next, nextSim, emptyEs, repeatEv, merge, switchEs, singletonEs, fmapB, filterJusts, foldB, fold, during, sampleOn, parList, scanlEv, last,filterEv, bufferStream, foldr1Ev, foldrEv, foldrSwitch, changes, EventStreamM, emit,runEventStreamM, printAll, repeatEvN)
+-- (EventStream(..), next, nextSim, emptyEs, repeatEv, merge, switchEs, singletonEs, fmapB, filterJusts, foldB, fold, during, sampleOn, parList, scanlEv, last,filterEv, bufferStream, foldr1Ev, foldrEv, foldrSwitch, changes, EventStreamM, emit,runEventStreamM, printAll, repeatEvN)
   where
 
 import Control.FRPNowImpl.FRPNow
@@ -13,6 +13,54 @@ import Control.Monad.Swap
 import Data.Sequence hiding (reverse,scanl,take)
 import Prelude hiding (until,length)
 import Debug.Trace
+
+type Es a = Event (Eht a)
+data Eht a = Eht a (Es a)
+
+newtype Stream a = Stream (Behavior (Es a))
+
+
+wrap :: Es a -> Behavior (Es a)
+wrap e = pure e `switch` ((\(Eht _ t) -> wrap t) <$> e) 
+
+changes :: Eq a => Behavior a -> Stream a
+changes b = Stream loop where
+  loop = do h <- change b
+            t <- plan (loop <$ h)
+            wrap (Eht <$> h <*> t)
+
+fromChanges :: a -> Stream a -> Behavior a
+fromChanges i (Stream s) = s >>= \t -> loop (Eht i t) 
+  where loop (Eht h t) = pure h `switch` (loop <$> t)
+
+(<@@>) :: Behavior (a -> b) -> Stream a -> Stream b
+b <@@> (Stream s) = Stream (s >>= \e -> plan (loop <$> e))  where
+  loop (Eht h t) = do h' <- b <*> pure h
+                      t' <- plan (loop <$> t)
+                      return (Eht h' t')
+
+foldr1Ev :: (a -> Event b -> b) -> Stream a -> Behavior (Event b)
+foldr1Ev f (Stream es) = (loop <$>) <$> es where
+ loop (Eht h t) = f h (loop <$> t)
+
+scanlEvPrivate :: (a -> b -> a) -> a -> Eht b -> Eht a
+scanlEvPrivate f i (Eht h t) = 
+   let i' = f i h
+   in Eht i' (scanlEvPrivate f i' <$> t)
+
+scanlEv :: (a -> b -> a) -> a -> Stream b -> Behavior (Stream a)
+scanlEv f i (Stream es) = 
+   do e <- es
+      let s = scanlEvPrivate f i <$> e
+      return (Stream (wrap s))
+
+                     
+
+
+fromChanges' :: a -> Stream a -> Behavior a
+fromChanges' i s = do e <- foldr1Ev step s
+                      pure i `switch` e
+
 
 {-
 type EVS a = Event (EHT a)
@@ -49,7 +97,7 @@ wrap e = getNow e >>= \case
  where wrapht (_ :|| t) = wrap t
 
 -}
-
+{-
 newtype EventStream a = Es { getEs :: Behavior (Event [a]) }
 
 instance Functor EventStream where
@@ -266,7 +314,7 @@ printAll evs = do e2 <- cur (nextSim evs)
          return ()            
 
 
-
+-}
 
 
 
