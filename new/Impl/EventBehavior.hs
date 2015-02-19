@@ -1,8 +1,9 @@
 {-# LANGUAGE LambdaCase #-}
-module EventBehavior where
+module Impl.EventBehavior where
 
 import Control.Applicative hiding (Const)
 import Control.Monad
+import Debug.Trace
 
 class (Applicative m, Monad m) => TimeEnv m where
   planM :: E m (m a) -> m (E m a)
@@ -25,14 +26,11 @@ instance TimeEnv m => Monad (E m) where
   return = Occ 
   Never    >>= f = Never
   (Occ x)  >>= f = f x
-  (E m)    >>= f = memoE ((>>= f) <$> m)
-
-minTime :: TimeEnv m => E m a -> E m b -> E m ()
-minTime Never r      = () <$ r
-minTime l Never      = () <$ l
-minTime (Occ _) _    = Occ ()
-minTime _ (Occ _)    = Occ ()
-minTime (E m) (E n)  = E $ minTime <$> m <*> n
+  (E m)    >>= f = memoE $
+    m >>= \case
+      Never -> return Never
+      Occ x -> runEvent (f x)
+      e -> return (e >>= f)
 
 
 memoE :: TimeEnv m => m (E m a) -> E m a
@@ -60,14 +58,23 @@ switch :: TimeEnv m =>  B m a -> E m (B m a) -> B m a
 switch b Never   = b
 switch _ (Occ b) = b
 switch b (E e)   = memoB $ e >>= \case
-   Never   -> runB b
    Occ   x -> runB x
+   Never   -> runB b
    e'      -> do (h,t) <- runB b
                  return (h, switchEv t e')
 
 switchEv :: TimeEnv m => E m (B m a) -> E m (B m a) -> E m (B m a)
-switchEv l r = ((pure undefined `switch` l) `switch` r) <$
-               (minTime l r)
+
+switchEv l Never     = l
+switchEv l (Occ r)   = Occ r
+switchEv Never r     = r
+switchEv (Occ x) r   = Occ (x `switch` r)
+switchEv (E l) (E r) = memoE $ 
+  r >>= \case
+    Occ y -> return $ Occ y
+    r' -> l >>= return . \case 
+           Occ x -> Occ (x `switch` r')
+           l'    -> switchEv l' r'
 
 
 

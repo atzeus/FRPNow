@@ -1,4 +1,4 @@
-module Ref where
+module Impl.Ref where
 
 import System.Mem.Weak
 import Control.Applicative

@@ -1,5 +1,5 @@
 {-# LANGUAGE DeriveFunctor,TupleSections,TypeOperators,MultiParamTypeClasses, FlexibleInstances,TypeSynonymInstances, LambdaCase, ExistentialQuantification, Rank2Types, GeneralizedNewtypeDeriving #-}
-module Impl.TimeEnv(Behavior, Event, Now, never, curNow, whenJust, switch, async, runFRP, unsafeSyncIO) where
+module Impl.TimeEnv(Behavior, Event, Now, whenJust, switch, async, runFRP) where
 
 import Control.Monad.Writer hiding (mapM_)
 import Control.Monad.Writer.Class
@@ -10,11 +10,10 @@ import Control.Monad.IO.Class  hiding (mapM_)
 import Control.Applicative hiding (empty)
 import Control.Concurrent
 import Data.IORef
-import Data.Sequence hiding (length)
+import Data.Sequence
 import Data.Foldable
 import Data.Maybe
 import System.IO.Unsafe -- only for unsafeMemoAgain at the bottom
-import Debug.Trace
 
 import Prelude hiding (mapM_)
 
@@ -56,35 +55,46 @@ planRef makeRef e   = runEvent e >>= \case
 
 
 tryAgain :: IORef (Either (Event (RealTimeEnv a)) a) -> Event a
-tryAgain r = E $ 
- do -- liftIO $ putStrLn "Trying" 
-    liftIO (readIORef r) >>= \case 
-     Right x -> return (Occ x)
-     Left e -> runEvent e >>= \case
-       Never -> return Never
-       Occ m -> do res <- m
-                   liftIO $ writeIORef r (Right res)
-                   return (Occ res)
-       e'    -> do liftIO $ writeIORef r (Left e')
-                   return (tryAgain r)
+tryAgain r = E $ liftIO (readIORef r) >>= \case 
+  Right x -> trace "returned!" $ return (Occ x)
+  Left e -> runEvent e >>= \case
+    Never -> return Never
+    Occ m -> do res <- m
+                liftIO $ writeIORef r (Right res)
+                return (Occ res)
+    e'    -> do liftIO $ writeIORef r (Left e')
+                return (tryAgain r)
 
 
 
 -- Start IO Stuff 
 
-newtype Now a = Now {runNow :: RealTimeEnv a } deriving (Functor,Applicative, Monad)
+newtype SpaceTime a = ST a 
 
-curNow :: Behavior a -> Now a
-curNow b = Now $ fst <$> runB b
+instance Monad SpaceTime where
+ return = ST
+ (ST x) >>= f = f x
+
+instance Functor SpaceTime where fmap = liftM
+instance Applicative SpaceTime where pure = return ; (<*>) = ap
+
+type Now = (Behavior :. SpaceTime)
+
+instance Swap Behavior SpaceTime where
+  swap (ST x) = ST <$> x 
 
 async :: IO a -> Now (Event a)
-async m = Now $ 
-  do (flag,clock,_) <- ask
-     ti <- liftIO $ newTIVar clock
-     liftIO $ forkIO $ m >>= writeTIVar ti >> signal flag 
+async m = Close $ B $
+       do (flag, clock,_) <- ask
+          e <- liftIO $ schedule clock flag m
+          return (ST e, never)
+
+schedule :: Clock -> Flag -> IO a -> IO (Event a)
+schedule clock flag  m = 
+  do ti <-  newTIVar clock
+     forkIO $ m >>= writeTIVar ti >> signal flag 
      return (tiVarToEv ti)
 
- 
 tiVarToEv :: TIVar a -> Event a
 tiVarToEv ti = E $ 
   do (_,_,round) <- ask
@@ -92,9 +102,14 @@ tiVarToEv ti = E $
       Just a -> return (Occ a)
       Nothing -> return $ tiVarToEv ti
 
-instance Swap Now Event where
- swap e = Now $ planRef makeStrongRef (runNow <$> e) 
+sampleB :: Now a -> RealTimeEnv a
+sampleB m = do (ST x, _) <- runB (open m)
+               return x
 
+instance Swap Now Event where
+ swap e = Close $ B $ 
+    do e' <- planRef makeStrongRef (sampleB <$> e) 
+       return (ST e', never)
                 
 -- Start main loop
 data SomeEvent = forall a. SomeEvent (Event a)
@@ -116,7 +131,6 @@ makeStrongRefs pl = catMaybes <$> mapM makeStrongRef (toList pl) where
 runRound :: Event a -> Plans -> RealTimeEnv (Maybe a)
 runRound e pl = 
   do pl' <- makeStrongRefs pl 
-     -- liftIO $ putStrLn ("nrplans " ++ show (length pl'))
      mapM_ (uncurry tryPlan) pl'
      runEvent e >>= return . \case
        Occ x -> Just x
@@ -131,22 +145,16 @@ runTimeEnv f c (TE m) =
 runFRP :: Now (Event a) -> IO a 
 runFRP m = do f <- newFlag 
               c <- newClock             
-              (ev,pl) <- runTimeEnv f c (runNow m)
+              (ev,pl) <- runTimeEnv f c (sampleB m)
               loop f c ev pl where
   loop f c ev pl = 
-     do -- putStrLn "Waiting!!"
-        waitForSignal f
+     do waitForSignal f
         endRound c
         (done, pl') <- runTimeEnv f c (runRound ev pl)  
         case done of
           Just x  -> return x
           Nothing -> loop f c ev pl'
               
-
--- occasionally handy for debugging
-
-unsafeSyncIO :: IO a -> Now a
-unsafeSyncIO m = Now $ liftIO m
 
 -- Memo stuff:
 

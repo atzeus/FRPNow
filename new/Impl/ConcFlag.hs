@@ -1,4 +1,4 @@
-module ConcFlag where
+module Impl.ConcFlag where
 
 import Control.Concurrent.MVar
 

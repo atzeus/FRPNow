@@ -1,5 +1,5 @@
 {-# LANGUAGE LambdaCase  #-}
-module UnscopedTIVar(Round, Clock, TIVar, newTIVar, writeTIVar, curRound, endRound,observeAt, newClock) where
+module Impl.UnscopedTIVar(Round, Clock, TIVar, newTIVar, writeTIVar, curRound, endRound,observeAt, newClock) where
 
 -- TIVars without the scope type parameter
 -- less safe, but easier on the eyes
