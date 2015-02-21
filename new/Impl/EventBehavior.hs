@@ -14,6 +14,18 @@ data E m a = E (m (E m a))
            | Occ a
            | Never
 
+curE :: TimeEnv m => E m a -> m (Maybe a)
+curE e = runEvent e >>= return . \case
+  Occ x -> Just x
+  _     -> Nothing
+
+
+fromMaybeM :: TimeEnv m => m (Maybe a) -> E m a
+fromMaybeM m = E $ m >>= return . \case
+   Just x -> Occ x
+   _      -> fromMaybeM m
+   
+
 runEvent :: TimeEnv m => E m a -> m (E m a)
 runEvent (Occ a) = return (Occ a)
 runEvent Never   = return Never
@@ -28,9 +40,9 @@ instance TimeEnv m => Monad (E m) where
   (Occ x)  >>= f = f x
   (E m)    >>= f = memoE $
     m >>= \case
-      Never -> return Never
-      Occ x -> runEvent (f x)
-      e -> return (e >>= f)
+      Never ->  return Never
+      Occ x ->  runEvent (f x)
+      e     ->  return (e >>= f)
 
 
 memoE :: TimeEnv m => m (E m a) -> E m a
@@ -45,6 +57,9 @@ data B m a = B (m (a, E m (B m a)) )
 runB :: TimeEnv m => B m a -> m (a, E m (B m a))
 runB (Const x) = return (x, never)
 runB (B m)     = m
+
+curB :: TimeEnv m => B m a -> m a
+curB b = fst <$> runB b
 
 instance TimeEnv m => Monad (B m) where
   return = Const
@@ -64,7 +79,6 @@ switch b (E e)   = memoB $ e >>= \case
                  return (h, switchEv t e')
 
 switchEv :: TimeEnv m => E m (B m a) -> E m (B m a) -> E m (B m a)
-
 switchEv l Never     = l
 switchEv l (Occ r)   = Occ r
 switchEv Never r     = r
