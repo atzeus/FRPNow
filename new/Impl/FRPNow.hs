@@ -1,5 +1,5 @@
-{-# LANGUAGE DeriveFunctor,TupleSections,TypeOperators,MultiParamTypeClasses, FlexibleInstances,TypeSynonymInstances, LambdaCase, ExistentialQuantification, Rank2Types, GeneralizedNewtypeDeriving #-}
-module Impl.TimeEnv(Behavior, Event, Now, never,  whenJust, switch, async, runFRP, unsafeSyncIO) where
+{-# LANGUAGE  OverlappingInstances, DeriveFunctor,TupleSections,TypeOperators,MultiParamTypeClasses, FlexibleInstances,TypeSynonymInstances, LambdaCase, ExistentialQuantification, GeneralizedNewtypeDeriving #-}
+module Impl.FRPNow(Behavior, Event, SpaceTime, Now, never,  whenJust, switch, async, runFRP, unsafeSyncIO) where
 
 import Control.Monad.Writer hiding (mapM_)
 import Control.Monad.Writer.Class
@@ -45,7 +45,7 @@ planM = makePlanRef makeWeakRef
 
 again = unsafeMemoAgain
 
-makePlanRef :: (forall x. x -> IO (Ref x)) -> Event (Env a) -> Env (Event a)
+makePlanRef :: (Event a -> IO (Ref (Event a))) -> Event (Env a) -> Env (Event a)
 makePlanRef makeRef e   = runEvent e >>= \case
   Never -> return Never
   Occ m -> return <$> m
@@ -104,6 +104,7 @@ unsafeSyncIO :: IO a -> Now a
 unsafeSyncIO m = Close $ pure $ ST $ liftIO m              
   
 -- Start main loop
+
 data SomeEvent = forall a. SomeEvent (Event a)
 
 tryPlan :: Plan -> SomeEvent -> Env  ()

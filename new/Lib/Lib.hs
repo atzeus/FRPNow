@@ -1,9 +1,9 @@
-{-# LANGUAGE NoMonomorphismRestriction,FlexibleInstances , MultiParamTypeClasses,GADTs, TypeOperators, TupleSections, ScopedTypeVariables,ConstraintKinds,FlexibleContexts,UndecidableInstances #-}
+{-# LANGUAGE FlexibleInstances , MultiParamTypeClasses,GADTs, TypeOperators, TupleSections, ScopedTypeVariables,ConstraintKinds,FlexibleContexts,UndecidableInstances #-}
 
 module Lib.Lib where
 
 
-import FRPNow
+import Impl.FRPNow
 import Swap
 import Control.Applicative
 import Control.Monad hiding (when)
@@ -16,14 +16,9 @@ instance Swap Behavior Event  where swap e = whenJust (Nothing `step` fmap (fmap
 plan :: Swap b Event => Event (b a) -> b (Event a)
 plan = swap
 
-class Cur m where
-  cur :: Behavior a -> m a
 
-instance Cur Now where
-  cur = curNow
-
-instance Monad n => Cur (Behavior :. n) where
-  cur = liftLeft
+cur :: Monad m => Behavior a -> (Behavior :. m) a
+cur = liftLeft
 
 
 step :: a -> Event (Behavior a) -> Behavior a
@@ -58,6 +53,13 @@ hasOccured e = pure False `switch` (pure True <$ e)
 change :: Eq a => Behavior a -> Behavior (Event ())
 change b = do v <- b ;
               when ((v /=) <$> b) 
+
+changeVal :: Eq a => Behavior a -> Behavior (Event a)
+changeVal b = do v <- b ;
+                 whenJust (notSame v <$> b)
+  where notSame v v' | v /= v'   = Just v'
+                     | otherwise = Nothing
+
 
 becomesTrue :: Behavior Bool -> Behavior (Event ())
 becomesTrue b = do v <- b
@@ -96,17 +98,17 @@ b <@ e = plan $ b <$ e
 b .@ e = (const <$> b) <@> e
 
 
-zipBE :: (a -> b -> b) -> Mortal a x -> Behavior b -> Behavior b
+zipBE :: (a -> b -> b) -> BehaviorEnd a x -> Behavior b -> Behavior b
 zipBE f (bx `Until` e) b = (f <$> bx <*> b) `switch` fmap (const b) e
 
-(.:) :: Mortal a x -> Behavior [a] -> Behavior [a]
+(.:) :: BehaviorEnd a x -> Behavior [a] -> Behavior [a]
 (.:) = zipBE (:)
 
 
-data Mortal x a = Until { behavior :: Behavior x, end ::  Event a }
+data BehaviorEnd x a = Until { behavior :: Behavior x, end ::  Event a }
 
-instance Monad (Mortal x) where
-  return x = pure (error "Dead!") `Until` pure x
+instance Monad (BehaviorEnd x) where
+  return x = pure (error "ended!") `Until` pure x
   (b `Until` e) >>= f  = 
      let v = f <$> e 
          b' = b `switch` (behavior <$> v)
@@ -114,18 +116,18 @@ instance Monad (Mortal x) where
      in b' `Until` e'
 
 
-instance (Monad b, Swap b Event) => Swap b (Mortal x) where
+instance (Monad b, Swap b Event) => Swap b (BehaviorEnd x) where
   swap (Until b e) = liftM (Until b) (plan e)
 
 
-until :: (Monad b, Swap b (Mortal x)) =>
-          Behavior x -> b (Event a) -> (b :. Mortal x) a
+until :: (Monad b, Swap b (BehaviorEnd x)) =>
+          Behavior x -> b (Event a) -> (b :. BehaviorEnd x) a
 until b e = liftLeft e >>= liftRight . (b `Until`)
 
   
 
-instance Functor (Mortal x) where fmap = liftM
-instance Applicative (Mortal x) where pure = return ; (<*>) = ap
+instance Functor (BehaviorEnd x) where fmap = liftM
+instance Applicative (BehaviorEnd x) where pure = return ; (<*>) = ap
           
 showChanges :: (Eq a, Show a) => Behavior a -> Now ()
 showChanges b = loop where
