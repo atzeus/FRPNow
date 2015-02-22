@@ -1,7 +1,7 @@
 
 
 module Lib.EventStream
-(EventStream, next, nextSim, repeatEvN,repeatEv, merge, fmapB, filterJusts, filterEv, filterMapB, 
+(Stream, next, nextSim, repeatEvN,repeatEv, merge, fmapB, filterJusts, filterEv, filterMapB, toChanges,
   filterB, during,sampleOn, scanlEv, foldr1Ev, foldrEv, foldrSwitch, foldB, fold, parList, bufferStream, fromChanges, printAll)
   where
 
@@ -17,33 +17,33 @@ import Swap
 import Impl.FRPNow
 import Lib.Lib
 
-newtype EventStream a = Es { getEs :: Behavior (Event [a]) }
+newtype Stream a = Es { getEs :: Behavior (Event [a]) }
 
-instance Functor EventStream where
+instance Functor Stream where
   fmap f (Es b) = Es $ (fmap f <$>) <$> b
 
-next :: EventStream a -> Behavior (Event a)
+next :: Stream a -> Behavior (Event a)
 next e = fmap head <$> getEs e
 
-nextSim :: EventStream a -> Behavior (Event [a]) 
+nextSim :: Stream a -> Behavior (Event [a]) 
 nextSim e = getEs e
 
-repeatEvN :: Now (Event [a]) -> Now (EventStream a)
+repeatEvN :: Now (Event [a]) -> Now (Stream a)
 repeatEvN en = Es <$> loop where
   loop = do e <-  en
             e' <- plan (loop <$ e)
-            return (pure e `switch` e')
+            return (e `step` e')
 
 
 
-repeatEv :: Behavior (Event a) -> EventStream a
+repeatEv :: Behavior (Event a) -> Stream a
 repeatEv b = Es $ loop where
    loop = do e <- b
              let e' = (\x -> [x]) <$> e
              pure e' `switch` (loop <$ e)
 
 -- in case of simultaneity, the left elements come first
-merge :: EventStream a -> EventStream a -> EventStream a
+merge :: Stream a -> Stream a -> Stream a
 merge l r = loop where
   loop = Es $ 
    do l' <- getEs l
@@ -56,51 +56,50 @@ merge l r = loop where
   nxt (R      r) = r 
 
 
-fmapB :: Behavior (a -> b) -> EventStream a -> EventStream b
+
+fmapB :: Behavior (a -> b) -> Stream a -> Stream b
 fmapB f es = Es $ loop where
- loop =  
-   do e  <- getEs es
-      e' <- plan (fmap nxt e)
-      pure e' `switch` (loop <$ e')
- nxt l = do fv <- f ; return (fmap fv l)
+ loop =  do e  <- getEs es
+            plan (nxt <$> e)
+ nxt l = (<$> l) <$> f 
 
 
-nextJusts :: EventStream (Maybe a) -> Behavior (Event [a])
+nextJusts :: Stream (Maybe a) -> Behavior (Event [a])
 nextJusts es = loop where
   loop = 
     do e <- getEs es
-       ev <- join <$> plan (fmap nxt e)
-       return ev
+       join <$> plan (fmap nxt e)
   nxt l = case catMaybes l of
               [] -> loop
               l  -> return (return l)
 
-filterJusts :: EventStream (Maybe a) -> EventStream a
-filterJusts es = Es loop where
-  loop =  do e <- nextJusts es
-             pure e `switch` (loop <$ e)
+filterJusts :: Stream (Maybe a) -> Stream a
+filterJusts es = Es $ nextJusts es
 
-filterEv :: EventStream Bool -> EventStream ()
+filterEv :: Stream Bool -> Stream ()
 filterEv es = filterJusts (toJust <$> es)
   where toJust True = Just ()
         toJust False = Nothing
 
 
-filterMapB :: Behavior (a -> Maybe b) -> EventStream a -> EventStream b
+filterMapB :: Behavior (a -> Maybe b) -> Stream a -> Stream b
 filterMapB f e = filterJusts $ fmapB f e
 
-filterB :: Behavior (a -> Bool) -> EventStream a -> EventStream a
+filterB :: Behavior (a -> Bool) -> Stream a -> Stream a
 filterB f = filterMapB (toMaybe <$> f) 
   where toMaybe f = \a ->  if f a then Just a else Nothing
 
-during :: EventStream a -> Behavior Bool -> EventStream a
+during :: Stream a -> Behavior Bool -> Stream a
 e `during` b = filterB (const <$> b) e
 
-sampleOn :: Behavior a -> EventStream x -> EventStream a
-sampleOn b = fmapB (const <$> b) 
+sampleOn :: Behavior a -> Stream x -> Stream a
+sampleOn b s = Es loop where
+ loop = do e  <- getEs s
+           let singleton x = [x]
+           plan ((singleton <$> b) <$ e)
 
 
-scanlEv :: (a -> b -> a) -> a -> EventStream b -> Behavior (EventStream a)
+scanlEv :: (a -> b -> a) -> a -> Stream b -> Behavior (Stream a)
 scanlEv f i es = Es <$> loop i where
  loop i = 
   do e  <- getEs es
@@ -108,38 +107,48 @@ scanlEv f i es = Es <$> loop i where
      ev <- plan (loop . last <$> e')
      return (pure e' `switch` ev)
 
-foldr1Ev :: (a -> Event b -> b) -> EventStream a -> Behavior (Event b)
+foldr1Ev :: (a -> Event b -> b) -> Stream a -> Behavior (Event b)
 foldr1Ev f es = loop where
  loop = 
   do e  <- getEs es
-     ev <- plan (nxt <$> e)
-     pure ev
+     plan (nxt <$> e)
  nxt [h]     = f h          <$> loop
  nxt (h : t) = f h . return <$> nxt t
 
-foldrEv :: a -> (a -> Event b -> b) -> EventStream a -> Behavior b
+foldrEv :: a -> (a -> Event b -> b) -> Stream a -> Behavior b
 foldrEv i f es = f i <$> foldr1Ev f es
 
-foldrSwitch :: Behavior a -> EventStream (Behavior a) -> Behavior (Behavior a)
+foldrSwitch :: Behavior a -> Stream (Behavior a) -> Behavior (Behavior a)
 foldrSwitch b = foldrEv b switch
 
-foldB :: Behavior a -> (Behavior a -> b -> Behavior a) -> EventStream b -> Behavior (Behavior a)
+foldB :: Behavior a -> (Behavior a -> b -> Behavior a) -> Stream b -> Behavior (Behavior a)
 foldB b f es = scanlEv f b es >>= foldrSwitch b
 
-fold :: (a -> b -> a) -> a -> EventStream b -> Behavior (Behavior a)
-fold f i = foldB (pure i) f' 
-  where f' b x = (\b -> f b x) <$> b
 
-parList :: EventStream (BehaviorEnd b ()) -> Behavior (Behavior [b])
+
+fold :: (a -> b -> a) -> a -> Stream b -> Behavior (Behavior a)
+fold f i s = loop i where
+  loop i = do e  <- getEs s
+              let e' = foldl f i <$> e
+              ev <- plan (loop <$> e')
+              return (i `step` ev)
+
+parList :: Stream (BehaviorEnd b ()) -> Behavior (Behavior [b])
 parList = foldB (pure []) (flip (.:)) 
 
-bufferStream :: Int -> EventStream a -> Behavior (EventStream [a])
+bufferStream :: Int -> Stream a -> Behavior (Stream [a])
 bufferStream i = scanlEv (\t h -> take i (h : t)) []
 
-fromChanges :: Eq a => Behavior a -> EventStream a
+fromChanges :: Eq a => Behavior a -> Stream a
 fromChanges = repeatEv . changeVal 
 
-printAll :: (Show a, Eq a) => EventStream a -> Now ()
+toChanges :: a -> Stream a -> Now (Behavior a)
+toChanges i (Es x) = loop i where
+  loop i = do e <- cur x
+              e' <- plan (loop . last <$> e)
+              return (i `step` e')
+
+printAll :: (Show a, Eq a) => Stream a -> Now ()
 printAll evs = do e2 <- cur (nextSim evs)
                   plan (fmap loop e2)
                   return () where
@@ -173,8 +182,8 @@ app l r = append l (singleton $ join $ fmap toView r) -- it's magic!
 emptyEmits = empty
 singleEmit x = singleton (return (x :| emptyEmits))
 
-toEventStream :: Evs x -> EventStream x
-toEventStream = Es . loop where
+toStream :: Evs x -> Stream x
+toStream = Es . loop where
   loop e = do e' <- lose e
               eh <- join <$> plan (nxt [] <$> toView e')
               pure eh `switch` (loop e' <$ eh)
@@ -189,29 +198,29 @@ toEventStream = Es . loop where
                     Just x -> nxt (h : l) x
                     Nothing -> return (return (reverse (h: l)))
 
-data EventStreamM x a = EventStreamM { emits :: Evs x, eend :: Event a }
+data StreamM x a = StreamM { emits :: Evs x, eend :: Event a }
 
-instance Monad (EventStreamM x) where
-  return x = EventStreamM emptyEmits (return x)
-  (EventStreamM s e) >>= f = let fv = fmap f e
+instance Monad (StreamM x) where
+  return x = StreamM emptyEmits (return x)
+  (StreamM s e) >>= f = let fv = fmap f e
                                  fs = emits <$> fv
                                  fa = fv >>= eend
-                             in EventStreamM (app s fs) fa
+                             in StreamM (app s fs) fa
 
-emit :: (Swap (BehaviorEnd x) f, Monad f) =>  x -> (f :. EventStreamM x) ()
-emit x = liftRight $ EventStreamM (singleEmit x) (return ())
+emit :: (Swap (BehaviorEnd x) f, Monad f) =>  x -> (f :. StreamM x) ()
+emit x = liftRight $ StreamM (singleEmit x) (return ())
 
-instance Wait (EventStreamM x) where 
-  waitEv = EventStreamM emptyEmits
+instance Wait (StreamM x) where 
+  waitEv = StreamM emptyEmits
 
-instance (Monad b, Swap Event b) => Swap (EventStreamM x) b where
-  swap (EventStreamM b e) = liftM (EventStreamM b) (plan e)
+instance (Monad b, Swap Event b) => Swap (StreamM x) b where
+  swap (StreamM b e) = liftM (StreamM b) (plan e)
 
-instance Functor (EventStreamM x) where fmap = liftM
-instance Applicative (EventStreamM x) where pure = return ; (<*>) = ap
+instance Functor (StreamM x) where fmap = liftM
+instance Applicative (StreamM x) where pure = return ; (<*>) = ap
 
-runEventStreamM :: EventStreamM x a -> (EventStream x, Event a)
-runEventStreamM (EventStreamM s e) = (toEventStream s, e)
+runStreamM :: StreamM x a -> (Stream x, Event a)
+runStreamM (StreamM s e) = (toStream s, e)
   
 
 -}

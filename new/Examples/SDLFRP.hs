@@ -7,8 +7,6 @@ import Graphics.UI.SDL.Keysym
 import Control.Applicative hiding (empty)
 import Control.Monad hiding (when)
 import FRPNow 
-import Lib.Lib
-import Lib.EventStream
 import Debug.Trace
 
 import Data.Set hiding (filter,fold, foldl,map)
@@ -139,10 +137,7 @@ drawAll screen b = loop where
       return ()
 
 getEvents ::  Now (Stream SDL.Event )
-getEvents = fst <$> (runEventStreamM  loop) where
-  loop =  do e <-  waitFor $ async ioWaitEvents
-             mapM_ emit e
-             loop
+getEvents = repeatEvN $ async ioWaitEvents
 
 
 

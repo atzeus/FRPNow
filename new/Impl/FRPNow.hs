@@ -1,5 +1,5 @@
-{-# LANGUAGE  OverlappingInstances, DeriveFunctor,TupleSections,TypeOperators,MultiParamTypeClasses, FlexibleInstances,TypeSynonymInstances, LambdaCase, ExistentialQuantification, GeneralizedNewtypeDeriving #-}
-module Impl.FRPNow(Behavior, Event, SpaceTime, Now, never,  whenJust, switch, async, runFRP, unsafeSyncIO) where
+{-# LANGUAGE  Rank2Types,OverlappingInstances, DeriveFunctor,TupleSections,TypeOperators,MultiParamTypeClasses, FlexibleInstances,TypeSynonymInstances, LambdaCase, ExistentialQuantification, GeneralizedNewtypeDeriving #-}
+module Impl.FRPNow(Behavior, Event, SpaceTime, Now, never, whenJust, switch, async, runFRP, unsafeSyncIO) where
 
 import Control.Monad.Writer hiding (mapM_)
 import Control.Monad.Writer.Class
@@ -9,21 +9,24 @@ import Control.Monad hiding (mapM_)
 import Control.Monad.IO.Class  hiding (mapM_)
 import Control.Applicative hiding (Const,empty)
 import Data.IORef
-import Data.Sequence hiding (length)
+import Data.Sequence hiding (length,reverse)
 import Data.Foldable
 import Data.Maybe
 import System.IO.Unsafe -- only for unsafeMemoAgain at the bottom
-
+import Debug.Trace
 import Prelude hiding (mapM_)
 
 import Swap
 import Impl.Ref
 import Impl.PrimEv
 
+again = unsafeMemoAgain
+--again f m = m 
 
 type Plans = Seq Plan
 
-data Plan = forall a. Plan (Ref (Event a))
+type PlanState a = IORef (Either (Event (Env a)) a)
+data Plan = forall a. Plan (Ref (PlanState a))
 type Env = SpaceTime
 newtype SpaceTime a = ST { runST :: ReaderT Clock (WriterT Plans IO) a }
   deriving (Monad,Applicative,Functor)
@@ -41,38 +44,38 @@ stIO m = ST $ liftIO m
 
 -- Plan stuff
 
-planM = makePlanRef makeWeakRef 
+planM = makePlanRef makeWeakIORef
 
-again = unsafeMemoAgain
 
-makePlanRef :: (Event a -> IO (Ref (Event a))) -> Event (Env a) -> Env (Event a)
+
+makePlanRef :: (forall a. IORef a -> IO (Ref (IORef a))) -> Event (Env a) -> Env (Event a)
 makePlanRef makeRef e   = runEvent e >>= \case
   Never -> return Never
   Occ m -> return <$> m
   e'    -> do r <- stIO $ newIORef (Left e')
-              let res = tryAgain r
-              ref <- stIO $ makeRef res
+              let res = E $ tryAgain r
+              ref <- stIO $ makeRef r
               addPlan (Plan ref)
               return res
 
 
-tryAgain :: IORef (Either (Event (Env a)) a) -> Event a
-tryAgain r = E $ 
- do -- liftIO $ putStrLn "Trying" 
-    stIO (readIORef r) >>= \case 
-     Right x -> return (Occ x)  
-     Left e -> runEvent e >>= \case
-       Never -> return Never
-       Occ m -> do res <- m
-                   stIO $ writeIORef r (Right res)
-                   return (Occ res)
-       e'    -> do stIO $ writeIORef r (Left e')
-                   return (tryAgain r)
+tryAgain :: PlanState a -> Env (Event a)
+tryAgain r = 
+          do stIO (readIORef r) >>= \case 
+               Right x -> return (Occ x)  
+               Left e -> runEvent e >>= \case
+                 Never -> return Never
+                 Occ m -> do res <- m
+                             stIO $ writeIORef r (Right res)
+                             return (Occ res)
+                 e'    -> do stIO $ writeIORef r (Left e)
+                             return (E $ tryAgain r)
 
 
 -- Start IO Stuff 
 
-type Now = (Behavior :. SpaceTime) 
+type Now  = (Behavior :. SpaceTime)
+
 
 instance Monad Now where
   return = Close .  pure . pure
@@ -86,14 +89,16 @@ absorb m = m >>= curB
 
    
 async :: IO a -> Now (Event a)
-async m = Close $ pure $ ST $ 
-  do c <- ask
-     pe <- liftIO $ spawn c m
+async m = Close $ return $   
+  do c <- ST ask
+     pe <- stIO $ spawn c m
      return $ fromMaybeM $ (pe `observeAt`) <$> getRound
+
 
 runNow :: Now a -> Env a
 runNow m = do s <- curB $ open m
               s
+
 
 instance Swap Now Event where
  swap e = Close $ return $ makePlanRef makeStrongRef (runNow <$> e) 
@@ -101,30 +106,30 @@ instance Swap Now Event where
 -- occasionally handy for debugging
 
 unsafeSyncIO :: IO a -> Now a
-unsafeSyncIO m = Close $ pure $ ST $ liftIO m              
-  
+unsafeSyncIO m = Close $ return $ stIO m
+
 -- Start main loop
 
-data SomeEvent = forall a. SomeEvent (Event a)
+data SomePlanState = forall a. SomePlanState (PlanState a)
 
-tryPlan :: Plan -> SomeEvent -> Env  ()
-tryPlan p (SomeEvent e) = runEvent e >>= \case
+tryPlan :: Plan -> SomePlanState -> Env  ()
+tryPlan p (SomePlanState r) = tryAgain r >>= \case
              Occ  _  -> return ()
              Never   -> return ()
              E _     -> addPlan p
 
 
-makeStrongRefs :: Plans -> Env  [(Plan, SomeEvent)] 
+makeStrongRefs :: Plans -> Env  [(Plan, SomePlanState)] 
 makeStrongRefs pl = catMaybes <$> mapM makeStrongRef (toList pl) where
- makeStrongRef :: Plan -> Env (Maybe (Plan, SomeEvent))
+ makeStrongRef :: Plan -> Env (Maybe (Plan, SomePlanState))
  makeStrongRef (Plan r) = stIO (deRef r) >>= return . \case
-         Just e  -> Just (Plan r, SomeEvent e)
+         Just e  -> Just (Plan r, SomePlanState e)
          Nothing -> Nothing
 
 tryPlans :: Plans -> Env ()
 tryPlans pl = 
   do pl' <- makeStrongRefs pl 
-     -- liftIO $ putStrLn ("nrplans " ++ show (length pl'))
+     -- stIO $ putStrLn ("nrplans " ++ show (length pl'))
      mapM_ (uncurry tryPlan) pl'
 
 runEnv :: Clock -> Env a ->  IO (a,Plans)
@@ -153,7 +158,7 @@ data Event a = E (Env (Event a))
 runEvent :: Event a -> Env (Event a)
 runEvent (Occ a) = return (Occ a)
 runEvent Never   = return Never
-runEvent (E m)   = m 
+runEvent (E m)   = m
 
 curE ::  Event a -> Env (Maybe a)
 curE e = runEvent e >>= return . \case
@@ -162,9 +167,11 @@ curE e = runEvent e >>= return . \case
 
 
 fromMaybeM :: Env (Maybe a) -> Event a
-fromMaybeM m = E $ m >>= return . \case
-   Just x -> Occ x
-   _      -> fromMaybeM m
+fromMaybeM m =
+  let x = E $ m >>= return . \case
+           Just x -> Occ x
+           _      -> fromMaybeM m
+  in x
    
 never :: Event a
 never = Never
@@ -173,11 +180,11 @@ instance Monad Event where
   return = Occ 
   Never    >>= f = Never
   (Occ x)  >>= f = f x
-  (E m)    >>= f = memoE $
-    m >>= \case
+  ev    >>= f = memoE $
+    runEvent ev >>= \case
       Never ->  return Never
       Occ x ->  runEvent (f x)
-      e     ->  return (e >>= f)
+      e'    ->  return (e' >>= f)
 
 
 memoE :: Env (Event a) -> Event a
@@ -207,19 +214,22 @@ curB b = fst <$> runB b
 instance Monad Behavior where
   return = Const
   (Const x) >>= f = f x 
-  (B m)     >>= f = memoB $
-    do (h,t) <- m 
+  b     >>= f = memoB $
+    do (h,t) <- runB b
+       runEvent t >>= \case
+         Occ x -> error "BLA!"
+         _ -> return ()
        (fh,th) <- runB (f h)
-       return (fh, switchEv th ((>>= f) <$> t))
+       return (fh, switchEv th ((b >>= f) <$ t))
             
 switch :: Behavior a -> Event (Behavior a) -> Behavior a
 switch b Never   = b
 switch _ (Occ b) = b
-switch b (E e)   = memoB $ e >>= \case
-   Occ   x -> runB x
+switch b e   = memoB $ runEvent e >>= \case
+   Occ   x -> runB x                 
    Never   -> runB b
-   e'      -> do (h,t) <- runB b
-                 return (h, switchEv t e')
+   _       -> do (h,t) <- runB b
+                 return (h, switchEv t e)
 
 switchEv :: Event (Behavior a) -> Event (Behavior a) -> Event (Behavior a)
 switchEv l Never     = l
@@ -238,22 +248,32 @@ switchEv (E l) (E r) = memoE $
 whenJust :: Behavior (Maybe a) -> Behavior (Event a)
 whenJust (Const Nothing)  = pure never
 whenJust (Const (Just x)) = pure (pure x)
-whenJust (B b) = memoB $ 
-  do (h, t) <- b
+whenJust b = memoB $ 
+  do (h, t) <- runB b
      case h of
-      Just x -> return (return x, whenJust <$> t)
-      Nothing -> do en <- planM (runB . whenJust <$> t)
+      Just x -> return (return x, whenJust b <$ t)
+      Nothing -> do en <- planM (runB (whenJust b) <$ t)
                     return (en >>= fst, en >>= snd)
 
 againB :: (a, Event (Behavior a)) -> Env (a, Event (Behavior a))
 againB (h,t) = runEvent t >>= \case
       Occ x -> runB x
-      _     -> return (h,t)
+      Never     -> return (h,Never)
+      t'        -> return (h,t')
 
 memoB :: Env (a, Event (Behavior a)) -> Behavior a
 memoB m = B (again againB m)
 
 
+instance Swap Behavior Event  where 
+   swap Never = pure Never
+   swap (Occ x) = Occ <$> x
+   swap e       = B $
+       runEvent e >>= \case
+         Never -> return (Never, Never)
+         Occ x -> runB (Occ <$> x)
+         _    -> do ev <- planM (runB <$> e)  
+                    return (fst <$> ev, (Occ <$>) <$> (ev >>= snd))
 
 instance Functor Behavior where
   fmap = liftM

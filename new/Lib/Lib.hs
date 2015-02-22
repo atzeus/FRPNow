@@ -11,14 +11,16 @@ import Control.Monad hiding (when)
 import Prelude hiding (until)
 import Swap
 
-instance Swap Behavior Event  where swap e = whenJust (Nothing `step` fmap (fmap Just) e)
+
+
+cur :: Monad m => Behavior a -> (Behavior :. m) a
+cur = liftLeft  
 
 plan :: Swap b Event => Event (b a) -> b (Event a)
 plan = swap
 
 
-cur :: Monad m => Behavior a -> (Behavior :. m) a
-cur = liftLeft
+
 
 
 step :: a -> Event (Behavior a) -> Behavior a
