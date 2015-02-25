@@ -97,6 +97,9 @@ black = Color 0 0 0
 grey = Color 0.1 0.1 0.1
 white = Color 1 1 1 
 
+lerpPoint :: Double -> Point -> Point -> Point
+lerpPoint i (x,y) (x',y') = (lerp i x x', lerp i y y')
+
 lerp :: Double -> Double -> Double -> Double
 lerp i l r = r * i' + l * (1 - i') where
   i' = min 1.0 (max 0.0 i)

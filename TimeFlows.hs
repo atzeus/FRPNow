@@ -22,7 +22,7 @@ main = do screen <- initSDL
                  clock <- getClock (1.0 / 60.0)
                  mousePos <- cur $ toMousePos evs
                  buttons  <- cur $ toMouseButtonsDown evs
-                 bxs <- cur (timeflows 20 0.05 clock mousePos buttons)
+                 bxs <- cur (timeflows 20 0.1 clock mousePos buttons)
                  drawAll screen bxs
                  return never
 
@@ -34,6 +34,9 @@ iteratenM f a n
                    t <- iteratenM f h (n - 1)
                    return (h : t)
 
+
+                              
+                   
           
 timeflows :: Integer -> Double -> Behavior Time -> Behavior Point -> Behavior (Set MouseBtn) -> Behavior (Behavior [Box])
 timeflows n d clock mousePos buttons = 

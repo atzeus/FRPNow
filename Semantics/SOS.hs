@@ -15,6 +15,13 @@ instance Monad m => Monad (Event m) where
       Nothing  -> return Nothing
       Just x  -> runEvent (f x)
 
+minTime :: Event m a -> Event m b -> Event m ()
+minTime l r = E $ 
+     runEvent r >>= \case
+        Right _ -> return (Right $ Just ())
+        Left r  -> runEvent l >>= \case
+          Right _ -> return (Right $ Just ())
+          Left l  -> return (
 
 data Behavior m a = B { runBehavior :: m (a, Event m (Behavior m a)) }
 
@@ -23,17 +30,6 @@ instance Monad m => Monad (Behavior m) where
   m >>= f  = B $ do (h,t) <- runBehavior m
                     runBehavior $ f h `switch` ((>>= f) <$> t)
                    
--- associative! 
--- This means, denotationally, 
--- switchEv (tl,bl) (tr,br) 
---  | tr <= tl = (tr, br)
---  | otherwise = (tl, bl `switch` (tr,br))                              
-switchEv :: Monad m => Event m (Behavior m a) -> Event m (Behavior m a) -> Event m (Behavior m a)
-switchEv l r = E $ runEvent r >>= \case
-   Just rb -> return $ Just rb
-   Nothing -> runEvent l >>= return . \case
-     Just lb -> Just (switch lb r)
-     Nothing -> Nothing
      
 switch :: Monad m=>  Behavior m a -> Event m (Behavior m a) -> Behavior m a
 switch b e = 

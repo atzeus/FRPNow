@@ -20,8 +20,8 @@ import Swap
 import Impl.Ref
 import Impl.PrimEv
 
-again = unsafeMemoAgain
---again f m = m 
+--again = unsafeMemoAgain
+again f m = m 
 
 type Plans = Seq Plan
 
@@ -61,7 +61,7 @@ makePlanRef makeRef e   = runEvent e >>= \case
 
 tryAgain :: PlanState a -> Env (Event a)
 tryAgain r = 
-          do stIO (readIORef r) >>= \case 
+   let x = do stIO (readIORef r) >>= \case 
                Right x -> return (Occ x)  
                Left e -> runEvent e >>= \case
                  Never -> return Never
@@ -69,8 +69,8 @@ tryAgain r =
                              stIO $ writeIORef r (Right res)
                              return (Occ res)
                  e'    -> do stIO $ writeIORef r (Left e)
-                             return (E $ tryAgain r)
-
+                             return (E x)
+  in x
 
 -- Start IO Stuff 
 
@@ -170,7 +170,7 @@ fromMaybeM :: Env (Maybe a) -> Event a
 fromMaybeM m =
   let x = E $ m >>= return . \case
            Just x -> Occ x
-           _      -> fromMaybeM m
+           _      -> x
   in x
    
 never :: Event a
@@ -184,7 +184,7 @@ instance Monad Event where
     runEvent ev >>= \case
       Never ->  return Never
       Occ x ->  runEvent (f x)
-      e'    ->  return (e' >>= f)
+      e'    ->  return (ev >>= f)
 
 
 memoE :: Env (Event a) -> Event a
@@ -216,9 +216,6 @@ instance Monad Behavior where
   (Const x) >>= f = f x 
   b     >>= f = memoB $
     do (h,t) <- runB b
-       runEvent t >>= \case
-         Occ x -> error "BLA!"
-         _ -> return ()
        (fh,th) <- runB (f h)
        return (fh, switchEv th ((b >>= f) <$ t))
             
@@ -236,7 +233,7 @@ switchEv l Never     = l
 switchEv l (Occ r)   = Occ r
 switchEv Never r     = r
 switchEv (Occ x) r   = Occ (x `switch` r)
-switchEv (E l) (E r) = memoE $ 
+switchEv (E l) (E r) = E $ 
   r >>= \case
     Occ y -> return $ Occ y
     r' -> l >>= return . \case 

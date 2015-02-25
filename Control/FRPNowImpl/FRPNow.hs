@@ -8,11 +8,12 @@ module Control.FRPNowImpl.FRPNow(
 import Control.Monad
 import Control.Applicative
 import qualified Control.FRPNowImpl.Now as N
+import Control.Monad.Fix
 
 
 newtype Now       a = N { getN :: N.Now       N.Global a } deriving (Functor,Monad,Applicative)
 newtype Event     a = E { getE :: N.Event     N.Global a } deriving (Functor,Monad,Applicative)
-newtype Behavior a = B { getB :: N.Behavior N.Global a } deriving (Functor,Monad,Applicative)
+newtype Behavior a = B { getB :: N.Behavior N.Global a } deriving (Functor,Monad,Applicative, MonadFix)
 
 never :: Event a
 never = E $ N.never

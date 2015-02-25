@@ -36,6 +36,15 @@ getClock minDelta = loop where
 type BehaviorT = Reader (Behavior Time) :. Behavior 
 type NowT      = Reader (Behavior Time) :. Behavior 
 
+localTime :: Behavior Time -> Behavior (Behavior Time)
+localTime t = do n <- cur t
+                 return ((\x -> x - n) <$> t)
+
+timeFrac :: Behavior Time -> Duration -> Behavior (Behavior Double)
+timeFrac t d = do t' <- localTime t
+                  e <- cur $ when $ (>= d) <$> t'
+                  let frac = (\x -> min 1.0 (x / d)) <$> t'
+                  return (frac `switch` (pure 1.0 <$ e))
 
 addSample :: History a -> Sample a -> History a
 addSample (i,ss) s = (i, ss |> s)
@@ -78,7 +87,12 @@ buffer time d s = do evs <- scanlEv addDrop empty times
             (ts,a) :< tl | ts < t    -> dropBefore t tl
                          | otherwise -> l
                          
-
+record2 :: Eq a => Behavior Time -> Behavior a -> Duration -> Behavior (EventStream (History a))
+record2 time b d = b >>= histories
+ where samples = ((,) <$> time) `fmapB` changes b
+       addNext h (t,s) = afterTime (t - d) (addSample h (t,s))
+       histories i = scanlEv addNext (i,empty) samples
+       
 
 record :: Behavior Time -> Behavior a -> Duration -> Behavior (EventStream (History a))
 record time b d = b >>= histories
@@ -93,8 +107,8 @@ bufferStream time maxn  b d = b >>= histories
         addNext h (t,s) = afterTime (t - d) (addSample h (t,s))
         histories i = scanlEv addNext (i,empty) samples
 -}
-delayBy :: Behavior Time -> Behavior a -> Duration -> Behavior (Behavior a)
-delayBy time b d = do bufs <- record time b d
+delayBy :: Eq a=> Behavior Time -> Behavior a -> Duration -> Behavior (Behavior a)
+delayBy time b d = do bufs <- record2 time b d
                       a <- b
                       let pastVals = fmap (\(i,_) -> pure i) bufs
                       e <- foldr1Ev switch pastVals

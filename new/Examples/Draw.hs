@@ -54,7 +54,7 @@ boxes mousePos buttons = parList ( box `sampleOn` clicks MLeft )
     loop :: Rect -> (Behavior :. BehaviorEnd Rect) ()
     loop r = do let rb = pure r
                 rb `until` next (clicks MMiddle `during` mouseOver rb)
-                off <- cur mouseOffset
+                off <- trace "Hallo!" $ cur mouseOffset
                 let r' = (r `moveRect`) <$> off
                 r' `until` release MMiddle
                 cur r' >>= loop

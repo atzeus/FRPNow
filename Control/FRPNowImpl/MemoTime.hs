@@ -4,7 +4,10 @@ import Data.IORef
 import System.IO.Unsafe
 import Control.Monad.IO.Class
 
-memoTime :: MonadIO m => (x -> m x) -> m x -> m x
+class MonadST m where
+  liftST :: ST s a -> m a
+
+memoTime :: MonadST m => (x -> m x) -> m x -> m x
 memoTime again m = runMemo where
   mem = unsafePerformIO $ newIORef m
   {-# NOINLINE mem #-}  

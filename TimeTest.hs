@@ -76,12 +76,7 @@ bla e1 = let e = when $ (== 1) <$> b
          in b
 -}
 {-
-bla :: Event Int -> Behaviour (Event Int)
-bla e = loop where
-  loop = getNow e >>= \case
-           Just a -> pure (pure 1)
-           Nothing -> do e' <- join <$> plan (loop <$ e) 
-                         pure e' `switch` (loop <$ e')
+
            
 sampleEvery :: (Eq a, Show a) => Int -> Behaviour a -> Now ()
 sampleEvery delay b = loop where

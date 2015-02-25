@@ -1,78 +1,100 @@
-{-# LANGUAGE TypeFamilies,ExistentialQuantification, Rank2Types, LambdaCase,GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE MultiParamTypeClasses,TypeSynonymInstances,TypeFamilies,ExistentialQuantification, Rank2Types, LambdaCase,GeneralizedNewtypeDeriving #-}
 import Control.Monad.Writer hiding (mapM_)
 import Control.Monad.Writer.Class
+import Control.Monad.Reader hiding (mapM_)
+import Control.Monad.Reader.Class
+import qualified Control.Monad.ST as SST
+import Control.Monad.ST.Lazy
 import Control.Monad hiding (mapM_)
+import Data.STRef
 import SOSTT
 import Control.Applicative hiding (empty)
 import Data.Sequence
 import Data.Foldable
 import Prelude hiding (mapM_)
+import STMemoTime 
 
-data APlan m = forall a. APlan (RefType m (Either (Event (PlanM m) (PlanM m a)) a))
+type Time = Double
 
-type Plans m = Seq (APlan (PlanM m))
+data NextTime = NT Time | Inf
 
-newtype PlanM m a = PlanM ( WriterT (Plans m) m a ) deriving (Monad,Applicative,Functor,MonadWriter (Plans m))
+instance Monoid NextTime where
+  mempty = Inf
+  mappend Inf y = y
+  mappend x Inf = x
+  mappend (NT x) (NT y) = NT (min x y)
 
-runPlanM :: Monad m => PlanM m a -> m (a, Plans m)
-runPlanM (PlanM m) = runWriterT m
+type PlanRef s a = STRef s (Either (Event (TimeEnv s) (TimeEnv s a)) a)
 
-class (Functor m, Applicative m, Monad m) => Memory m where
-  type RefType m :: * -> *
-  newRef   :: a -> m (RefType m a)
-  readRef  :: RefType m a -> m a
-  writeRef :: RefType m a -> a -> m ()
+data APlan s = forall a. APlan (PlanRef s a)
+type Plans s = Seq (APlan s)
 
-instance Memory m => Memory (PlanM m) where
-  type RefType (PlanM m) = RefType m
-  newRef   x   = PlanM $ lift $ newRef   x
-  readRef  x   = PlanM $ lift $ readRef  x
-  writeRef x y = PlanM $ lift $ writeRef x y
+newtype TimeEnv s a = TimeEnv ( WriterT (Plans s,NextTime) (ReaderT Time (ST s)) a) deriving (Monad,Applicative,Functor)
 
-instance Monad m => MemoTime (PlanM m)
+instance MonadReader Time (TimeEnv s) where
+  ask = TimeEnv $ lift ask
 
-instance Memory m => Plan (PlanM m) where
+
+tellNextTime :: Time -> TimeEnv s ()
+tellNextTime t = 
+  do n <- ask
+     if t <= n
+     then return ()
+     else TimeEnv $ tell (mempty, NT t)
+
+schedule :: PlanRef s a -> TimeEnv s ()
+schedule r = TimeEnv $ tell (singleton (APlan r), mempty)
+
+instance LiftST TimeEnv where
+  liftST = TimeEnv . lift . lift . strictToLazyST
+
+toEv :: Time -> a -> Event (TimeEnv s) a
+toEv t a = maybeToEv $  
+  do n <- ask
+     tellNextTime t
+     return $ if t >= n then Just a else Nothing
+
+instance Plan (TimeEnv m) where
   plan Never = return Never
   plan (E m) = m >>= \case
-    Left e  -> do r <- newRef (Left e)
+    Left e  -> do r <- liftST (newSTRef (Left e))
                   schedule r
-                  return (toEv $ tryAgain r)
+                  return (maybeToEv $ tryAgain r)
     Right x -> return <$> x
 
-schedule :: RefType m (Either (Event (PlanM m) (PlanM m a)) a) -> PlanM m ()
-schedule r = PlanM $ tell (singleton (APlan r))
+instance MemoTime (TimeEnv s) where
+  memoTime = memoTimeST
 
-tryAgain :: Memory m => RefType m (Either (Event (PlanM m) (PlanM m a)) a) -> PlanM m (Maybe a)
-tryAgain r = E $ readRef r >>= \case
-  Right x -> return (Right x)
+tryAgain :: PlanRef s a -> TimeEnv s (Maybe a)
+tryAgain r = liftST (readSTRef r) >>= \case
+  Right x -> return (Just x)
   Left e  -> runEvent e >>= \case
-      Left e' -> do writeRef r (Left e')
+      Left e' -> do liftST $ writeSTRef r (Left e')
                     return Nothing
       Right x -> do res <- x
-                    writeRef r (Right res)
+                    liftST $ writeSTRef r (Right res)
                     return (Just res)
 
-tryPlans :: Memory m => Plans m -> PlanM m ()
+runTimeEnv :: Time -> TimeEnv s a -> ST s (a, (Plans s, NextTime))
+runTimeEnv t (TimeEnv m) = runReaderT (runWriterT m) t
+
+tryPlans :: Plans s -> TimeEnv s ()
 tryPlans p = mapM_ tryPlan p where          
   tryPlan (APlan r) = tryAgain r >>= \case
              Just _ ->  return ()
              Nothing -> schedule r
 
-{-
-runBehavior :: Enum t => (forall s. Behavior (TE t s) a) -> [a]
-runBehavior b = LST.runST $ LST.strictToLazyST $ sampleAll b
+sampleBehavior :: (forall s. Behavior (TimeEnv s) a) -> [(Time,a)]
+sampleBehavior b = SST.runST $ lazyToStrictST $ sampleAll b
 
-sampleAll :: Enum t => Behavior (TE t s) a -> ST s [a]
-sampleAll (B m)  = loop empty [toEnum 0..] where
-  loop l (ht:tt) = 
-    do p <- tryPlans l ht
-       ((h,_),pb) <- runTimeEnv m ht
-       t     <- loop (p >< pb) tt
-       return (h : t) 
+sampleAll :: Behavior (TimeEnv s) a -> ST s [(Time,a)]
+sampleAll (B m) = loop empty 0.0 where
+  loop l t = do (h, (l',nt)) <- runTimeEnv t (round l)
+                case nt of
+                 Inf   -> return [(t,h)]
+                 NT nt -> do ts <- loop l' nt
+                             return ((t,h):ts)
+  round l = do p <- tryPlans l
+               x <- fst <$> m
+               return x
 
-
-
-
-runTimeEnv :: TE t s a -> t -> ST s (a,Plans t s)
-runTimeEnv (TE m) t = runWriterT (runReaderT m t)
--} 

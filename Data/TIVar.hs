@@ -1,12 +1,12 @@
 {-# LANGUAGE LambdaCase, Rank2Types  #-}
-module Data.TIVar where
+module Data.TIVar(Round, Clock,prevRound,newTIVar, writeTIVar, curRound, endRound,observeAt, withClock) where
 
 
 import Control.Concurrent.MVar
 import Control.Applicative
 import System.IO.Unsafe
 
-data Round s = Round Integer deriving (Ord,Eq,Show)
+newtype Round s = Round Integer deriving (Ord,Eq,Show)
 
 newtype TIVar s a = TIVar (MVar (Either (Clock s) (Round s, a)))
 newtype Clock s = Clock (MVar Integer)

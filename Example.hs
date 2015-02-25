@@ -44,12 +44,23 @@ boxes mousePos buttons = parList $ box `sampleOn` clicks MLeft
         (Box  <$> r <*> color)  `until`  clickOn r MRight
 
 
-  dragRect :: Rect -> Behavior (Behavior Rect)  
-  dragRect r =  behavior <$> open (loop r) where
-    loop r = do pure r `until` clickOn (pure r) MMiddle
+  movableRect :: Rect -> Behavior (Behavior Rect)
+  movableRect r = -- monadfix
+    mdo drag <- isDragging rect
+        rect <- dragRect drag r
+        return rect
+
+  isDragging :: Behavior Rect -> Behavior (Behavior Bool)
+  isDragging rect =  behavior <$> open (forever loop) where
+    loop = do pure False `until` next (clicks MMiddle `during` mouseOver)
+              pure True `until` when (not <$> mouseOver)
+
+  dragRect :: Rect -> Behavior Bool -> Behavior (Behavior Rect)  
+  dragRect isDragging r =  behavior <$> open (loop r) where
+    loop r = do pure r `until` when isDragging
                 offset <- cur mouseOffset
                 let mr = moveRect r <$> offset
-                mr `until` release MMiddle
+                mr `until` when (not <$> isDragging)
                 cur mr >>= loop
                         
   mouseOffset :: Behavior (Behavior Point)

@@ -30,8 +30,8 @@ instance Monoid NextTime where
   mappend (NT l) (NT r) = NT (min l r)
 
 
-newtype TimeEnv s a = TE ( WriterT (NextTime, Plans s) (ReaderT TimeBounds (ST s)) a) 
- deriving (Monad,Applicative,Functor,MonadWriter (NextTime, Plans s) ,MonadReader TimeBounds)
+newtype TimeEnv a = TE ( WriterT Plans (ReaderT Round IO) a) 
+ deriving (Monad,Applicative,Functor,MonadWriter Plans ,MonadReader Round)
 
 runTimeEnv :: TimeBounds -> TimeEnv s a -> ST s (a, (NextTime,Plans s))
 runTimeEnv t (TE m) = runReaderT (runWriterT m) t
