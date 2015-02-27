@@ -1,11 +1,11 @@
 {-# LANGUAGE TypeOperators #-}
 
-module Control.FRPNowLib.Time where
+module Lib.Time where
 
-import Control.FRPNowImpl.FRPNow
-import Control.FRPNowLib.Lib
-import Control.FRPNowLib.EventStream
-import Control.Monad.Swap
+import Impl.FRPNow
+import Lib.Lib
+import Lib.EventStream
+import Swap
 import Data.Sequence
 import Control.Applicative hiding (empty)
 import Data.Time.Clock.POSIX
@@ -28,21 +28,19 @@ waitSeconds d = threadDelay (round (d * 1000000))
 getClock :: Duration -> Now (Behavior Time)
 getClock minDelta = loop where
  loop = 
-   do now <- syncIO $ getElapsedTimeSeconds 
-      e <- asyncIO (waitSeconds minDelta)
-      e' <- planIO (loop <$ e)
+   do now <- unsafeSyncIO $ getElapsedTimeSeconds 
+      e <- async (waitSeconds minDelta)
+      e' <- plan (loop <$ e)
       return (pure now `switch` e')
 
-type BehaviorT = Reader (Behavior Time) :. Behavior 
-type NowT      = Reader (Behavior Time) :. Behavior 
 
 localTime :: Behavior Time -> Behavior (Behavior Time)
-localTime t = do n <- cur t
+localTime t = do n <- t
                  return ((\x -> x - n) <$> t)
 
 timeFrac :: Behavior Time -> Duration -> Behavior (Behavior Double)
 timeFrac t d = do t' <- localTime t
-                  e <- cur $ when $ (>= d) <$> t'
+                  e <- when $ (>= d) <$> t'
                   let frac = (\x -> min 1.0 (x / d)) <$> t'
                   return (frac `switch` (pure 1.0 <$ e))
 
@@ -60,7 +58,7 @@ afterTime t (a,s) =
 
 deltaTime :: Behavior Time -> Behavior (Event Time)
 deltaTime time = do now <- time
-                    ((\x -> x - now) <$>) <$> change time 
+                    ((\x -> x - now) <$>) <$> changeVal time 
 
 
 integral :: Behavior Time -> Behavior Double -> Behavior (Behavior Double)
@@ -75,9 +73,9 @@ integral time b =
                        e <- plan (loop cur t' <$> dt)
                        return (pure t' `switch` e)
 
-buffer :: Behavior Time -> Duration -> EventStream a -> Behavior (EventStream [a])
-buffer time d s = do evs <- scanlEv addDrop empty times
-                     return (map snd . toList <$> evs)
+buffertime :: Behavior Time -> Duration -> Stream a -> Behavior (Stream [a])
+buffertime time d s = do evs <- scanlEv addDrop empty times
+                         return (map snd . toList <$> evs)
   where times = fmapB ((,) <$> time) s
         addDrop l (t,s) = dropBefore (t - d) (l |> (t,s))
         dropBefore :: Time -> Seq (Time,a) -> Seq (Time,a)
@@ -87,35 +85,23 @@ buffer time d s = do evs <- scanlEv addDrop empty times
             (ts,a) :< tl | ts < t    -> dropBefore t tl
                          | otherwise -> l
                          
-record2 :: Eq a => Behavior Time -> Behavior a -> Duration -> Behavior (EventStream (History a))
+record2 :: Eq a => Behavior Time -> Behavior a -> Duration -> Behavior (Stream (History a))
 record2 time b d = b >>= histories
- where samples = ((,) <$> time) `fmapB` changes b
+ where samples = ((,) <$> time) `fmapB` fromChanges b
        addNext h (t,s) = afterTime (t - d) (addSample h (t,s))
        histories i = scanlEv addNext (i,empty) samples
        
 
-record :: Behavior Time -> Behavior a -> Duration -> Behavior (EventStream (History a))
+record :: Behavior Time -> Behavior a -> Duration -> Behavior (Stream (History a))
 record time b d = b >>= histories
-  where samples = ((\x y -> (y,x)) <$> b) `fmapB` (changes time)
+  where samples = ((\x y -> (y,x)) <$> b) `fmapB` (fromChanges time)
         addNext h (t,s) = afterTime (t - d) (addSample h (t,s))
         histories i = scanlEv addNext (i,empty) samples
 
-{-
-bufferStream :: Behavior Time -> Duration -> EventStream a -> Behavior (EventStream (Sample a))
-bufferStream time maxn  b d = b >>= histories
-  where samples = ((\x y -> (y,x)) <$> b) `fmapB` (changes time)
-        addNext h (t,s) = afterTime (t - d) (addSample h (t,s))
-        histories i = scanlEv addNext (i,empty) samples
--}
 delayBy :: Eq a=> Behavior Time -> Behavior a -> Duration -> Behavior (Behavior a)
-delayBy time b d = do bufs <- record2 time b d
+delayBy time b d = do bufs <- record time b d
                       a <- b
                       let pastVals = fmap (\(i,_) -> pure i) bufs
                       e <- foldr1Ev switch pastVals
                       return (pure a `switch` e)
-
-                
-     
-     
-     
 

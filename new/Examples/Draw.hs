@@ -22,13 +22,16 @@ import Prelude hiding (until)
 
 
 main = do screen <- initSDL
-          runFRP $
+          runNow $
               do evs <- getEvents
-                 mousePos <- cur $ toMousePos evs
-                 buttons  <- cur $ toMouseButtonsDown evs
-                 bxs <- cur (boxes mousePos buttons)
+                 mousePos <- sample $ toMousePos evs
+                 buttons  <- sample $ toMouseButtonsDown evs
+                 bxs <- sample (boxes mousePos buttons)
+                 quit <- sample (quitEv evs)
                  drawAll screen bxs
-                 return never
+                 return quit
+
+
 
 
 boxes :: Behavior Point -> Behavior (Set MouseBtn) -> Behavior (Behavior [Box])
@@ -54,7 +57,7 @@ boxes mousePos buttons = parList ( box `sampleOn` clicks MLeft )
     loop :: Rect -> (Behavior :. BehaviorEnd Rect) ()
     loop r = do let rb = pure r
                 rb `until` next (clicks MMiddle `during` mouseOver rb)
-                off <- trace "Hallo!" $ cur mouseOffset
+                off <- cur mouseOffset
                 let r' = (r `moveRect`) <$> off
                 r' `until` release MMiddle
                 cur r' >>= loop

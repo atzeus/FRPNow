@@ -33,8 +33,6 @@ getClock minDelta = loop where
       e' <- planIO (loop <$ e)
       return (pure now `switch` e')
 
-type BehaviorT = Reader (Behavior Time) :. Behavior 
-type NowT      = Reader (Behavior Time) :. Behavior 
 
 localTime :: Behavior Time -> Behavior (Behavior Time)
 localTime t = do n <- cur t
@@ -100,13 +98,6 @@ record time b d = b >>= histories
         addNext h (t,s) = afterTime (t - d) (addSample h (t,s))
         histories i = scanlEv addNext (i,empty) samples
 
-{-
-bufferStream :: Behavior Time -> Duration -> EventStream a -> Behavior (EventStream (Sample a))
-bufferStream time maxn  b d = b >>= histories
-  where samples = ((\x y -> (y,x)) <$> b) `fmapB` (changes time)
-        addNext h (t,s) = afterTime (t - d) (addSample h (t,s))
-        histories i = scanlEv addNext (i,empty) samples
--}
 delayBy :: Eq a=> Behavior Time -> Behavior a -> Duration -> Behavior (Behavior a)
 delayBy time b d = do bufs <- record2 time b d
                       a <- b

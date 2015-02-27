@@ -13,13 +13,16 @@ import Swap
 
 
 
+
 cur :: Monad m => Behavior a -> (Behavior :. m) a
 cur = liftLeft  
+
 
 plan :: Swap b Event => Event (b a) -> b (Event a)
 plan = swap
 
-
+planNow :: Event (Now a) -> Now (Event a)
+planNow = plan
 
 
 
@@ -32,11 +35,26 @@ when b = whenJust $ choose <$> b where
   choose False = Nothing
 
 
-occ :: Event a -> Behavior (Maybe a)
-occ e = Nothing `step` fmap (pure . Just) e
+occ :: E a -> B (Maybe a)
+occ e = pure Nothing `switch` ((pure . Just) <$> e)
 
-first :: Event a -> Event a -> Behavior (Event a)
-first l r = whenJust (occ r `switch` (pure . Just <$> l))
+first :: E a -> E a -> B (E a)
+first l r = whenJust (occ r `switch` ((pure . Just) <$> l)) 
+
+countChanges :: Eq a => Behavior a -> Behavior (Behavior Int)
+countChanges b = loop 0 where
+  loop :: Int -> Behavior (Behavior Int)
+  loop i = do  e   <-  change b
+               e'  <-  snapshot (loop (i+1)) e
+               return (pure i `switch` e')
+
+foldB :: Eq a => (b -> a -> b) -> b -> Behavior a -> Behavior (Behavior b)
+foldB f i b = loop i where
+  loop i = do  c   <- b
+               let i' = f i c
+               e   <-  change b
+               e'  <-  snapshot (loop i') e
+               return (pure i' `switch` e')
 
 data Race l r = Tie l r
               | L l
@@ -78,17 +96,24 @@ sampleUntil b end  = loop [] where
                if e then return (pure (reverse ss'))
                else do c <- change b
                        join <$> plan (loop ss' <$ c)  
-                    
+
+type E = Event
+
+plan' :: E (B a) -> B (E a)
+plan' e = whenJust (pure Nothing `switch` ((Just <$>) <$> e))                   
 
 prev :: Eq a => a -> Behavior a -> Behavior (Behavior a)
-prev i b = loop i where
- loop i = do c   <- b
-             e   <- when ((/= c) <$> b)
-             e'  <- plan (loop c <$ e)
-             return (pure i `switch` e')
+prev i b = (fst <$>) <$> foldB (\(_,p) c ->  (p,c)) (undefined,i) b
 
-snapshot :: Event a -> Behavior b -> Behavior (Event (a,b))
-snapshot e b = plan $ (\x -> (x,) <$> b) <$> e
+
+type B = Behavior 
+
+buffer :: Eq a => Int -> B a -> B (B [a])
+buffer n b = foldB (\l e -> take n (e : l)) [] b
+
+snapshot :: Behavior a -> Event () -> Behavior (Event a)
+snapshot b e =  let e' = (Just <$> b) <$ e
+                in whenJust (pure Nothing `switch` e')
 
 (<@>) :: Behavior (a -> b) -> Event a -> Behavior (Event b)
 b <@> e = plan $ fmap (\x -> b <*> pure x) e
@@ -106,6 +131,7 @@ zipBE f (bx `Until` e) b = (f <$> bx <*> b) `switch` fmap (const b) e
 (.:) :: BehaviorEnd a x -> Behavior [a] -> Behavior [a]
 (.:) = zipBE (:)
 
+-- A task monad like abstraction, similar to "Monadic FRP"
 
 data BehaviorEnd x a = Until { behavior :: Behavior x, end ::  Event a }
 
@@ -130,11 +156,13 @@ until b e = liftLeft e >>= liftRight . (b `Until`)
 
 instance Functor (BehaviorEnd x) where fmap = liftM
 instance Applicative (BehaviorEnd x) where pure = return ; (<*>) = ap
+
+-- debug thing
           
 showChanges :: (Eq a, Show a) => Behavior a -> Now ()
 showChanges b = loop where
- loop = do v <- cur b
+ loop = do v <- sample b
            unsafeSyncIO $ putStrLn (show v)
-           e <- cur $ change b
+           e <- sample $ change b
            plan (loop <$ e)
            return ()

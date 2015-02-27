@@ -1,5 +1,5 @@
 {-# LANGUAGE  Rank2Types,OverlappingInstances, DeriveFunctor,TupleSections,TypeOperators,MultiParamTypeClasses, FlexibleInstances,TypeSynonymInstances, LambdaCase, ExistentialQuantification, GeneralizedNewtypeDeriving #-}
-module Impl.FRPNow(Behavior, Event, SpaceTime, Now, never, whenJust, switch, async, runFRP, unsafeSyncIO) where
+module Impl.FRPNow(Behavior, Event, Now, never, whenJust, switch, sample, async, runNow, unsafeSyncIO) where
 
 import Control.Monad.Writer hiding (mapM_)
 import Control.Monad.Writer.Class
@@ -20,153 +20,34 @@ import Swap
 import Impl.Ref
 import Impl.PrimEv
 
---again = unsafeMemoAgain
-again f m = m 
-
-type Plans = Seq Plan
-
-type PlanState a = IORef (Either (Event (Env a)) a)
-data Plan = forall a. Plan (Ref (PlanState a))
-type Env = SpaceTime
-newtype SpaceTime a = ST { runST :: ReaderT Clock (WriterT Plans IO) a }
-  deriving (Monad,Applicative,Functor)
-
--- unexported helper functions
-
-getRound :: Env Round
-getRound = ST $ ask >>= liftIO . curRound
-
-addPlan :: Plan -> Env ()
-addPlan p = ST $ tell (singleton p)
-
-stIO :: IO a -> Env a
-stIO m = ST $ liftIO m
-
--- Plan stuff
-
-planM = makePlanRef makeWeakIORef
+-- comment/uncomment here to disable optimization
+again :: (x -> M  x) -> M x -> M x
+again = unsafeMemoAgain
+--again f m = m 
 
 
-
-makePlanRef :: (forall a. IORef a -> IO (Ref (IORef a))) -> Event (Env a) -> Env (Event a)
-makePlanRef makeRef e   = runEvent e >>= \case
-  Never -> return Never
-  Occ m -> return <$> m
-  e'    -> do r <- stIO $ newIORef (Left e')
-              let res = E $ tryAgain r
-              ref <- stIO $ makeRef r
-              addPlan (Plan ref)
-              return res
+type N = M
 
 
-tryAgain :: PlanState a -> Env (Event a)
-tryAgain r = 
-   let x = do stIO (readIORef r) >>= \case 
-               Right x -> return (Occ x)  
-               Left e -> runEvent e >>= \case
-                 Never -> return Never
-                 Occ m -> do res <- m
-                             stIO $ writeIORef r (Right res)
-                             return (Occ res)
-                 e'    -> do stIO $ writeIORef r (Left e)
-                             return (E x)
-  in x
-
--- Start IO Stuff 
-
-type Now  = (Behavior :. SpaceTime)
+-- Start events, a bit more optimized than in paper
 
 
-instance Monad Now where
-  return = Close .  pure . pure
-  m >>= f = joinNow (fmap f m)
-
-joinNow :: Now (Now a) -> Now a
-joinNow = Close . fmap join . fmap absorb . open . fmap open
-
-absorb :: SpaceTime (Behavior a) -> SpaceTime a
-absorb m = m >>= curB
-
-   
-async :: IO a -> Now (Event a)
-async m = Close $ return $   
-  do c <- ST ask
-     pe <- stIO $ spawn c m
-     return $ fromMaybeM $ (pe `observeAt`) <$> getRound
-
-
-runNow :: Now a -> Env a
-runNow m = do s <- curB $ open m
-              s
-
-
-instance Swap Now Event where
- swap e = Close $ return $ makePlanRef makeStrongRef (runNow <$> e) 
-
--- occasionally handy for debugging
-
-unsafeSyncIO :: IO a -> Now a
-unsafeSyncIO m = Close $ return $ stIO m
-
--- Start main loop
-
-data SomePlanState = forall a. SomePlanState (PlanState a)
-
-tryPlan :: Plan -> SomePlanState -> Env  ()
-tryPlan p (SomePlanState r) = tryAgain r >>= \case
-             Occ  _  -> return ()
-             Never   -> return ()
-             E _     -> addPlan p
-
-
-makeStrongRefs :: Plans -> Env  [(Plan, SomePlanState)] 
-makeStrongRefs pl = catMaybes <$> mapM makeStrongRef (toList pl) where
- makeStrongRef :: Plan -> Env (Maybe (Plan, SomePlanState))
- makeStrongRef (Plan r) = stIO (deRef r) >>= return . \case
-         Just e  -> Just (Plan r, SomePlanState e)
-         Nothing -> Nothing
-
-tryPlans :: Plans -> Env ()
-tryPlans pl = 
-  do pl' <- makeStrongRefs pl 
-     -- stIO $ putStrLn ("nrplans " ++ show (length pl'))
-     mapM_ (uncurry tryPlan) pl'
-
-runEnv :: Clock -> Env a ->  IO (a,Plans)
-runEnv c m = runWriterT $ runReaderT (runST m) c
-
-runFRP :: Now (Event a) -> IO a 
-runFRP m = do c <- newClock             
-              (ev,pl) <- runEnv c (runNow m)
-              loop c ev pl where
-  loop c ev pl = fst <$> runEnv c (curE ev) >>= \case 
-    Just x -> return x
-    Nothing -> 
-      do waitEndRound c
-         ((), pl') <- runEnv c (tryPlans pl) 
-         loop c ev pl'
-        
-              
-
--- Start events
-
-
-data Event a = E (Env (Event a))
+data Event a = E (M (Event a))
              | Occ a
              | Never
 
-runEvent :: Event a -> Env (Event a)
-runEvent (Occ a) = return (Occ a)
-runEvent Never   = return Never
-runEvent (E m)   = m
+runE :: Event a -> M (Event a)
+runE (Occ a) = return (Occ a)
+runE Never   = return Never
+runE (E m)   = m
 
-curE ::  Event a -> Env (Maybe a)
-curE e = runEvent e >>= return . \case
+curE ::  Event a -> M (Maybe a)
+curE e = runE e >>= return . \case
   Occ x -> Just x
   _     -> Nothing
 
 
-fromMaybeM :: Env (Maybe a) -> Event a
+fromMaybeM :: M (Maybe a) -> Event a
 fromMaybeM m =
   let x = E $ m >>= return . \case
            Just x -> Occ x
@@ -181,14 +62,15 @@ instance Monad Event where
   Never    >>= f = Never
   (Occ x)  >>= f = f x
   ev    >>= f = memoE $
-    runEvent ev >>= \case
+    runE ev >>= \case
       Never ->  return Never
-      Occ x ->  runEvent (f x)
+      Occ x ->  runE (f x)
       e'    ->  return (ev >>= f)
 
+rerunE = runE
 
-memoE :: Env (Event a) -> Event a
-memoE m = E (again runEvent m)
+memoE :: M (Event a) -> Event a
+memoE m = E (again rerunE m)
 
 instance Functor Event where
   fmap = liftM
@@ -197,18 +79,16 @@ instance Applicative Event where
   pure = return
   (<*>) = ap
 
--- Start behavior
+-- Start behaviors, also a bit more optimized than in paper
 
--- strictness alert: do not runEvent the tail of a behavior we just got!
-
-data Behavior a = B (Env (a, Event (Behavior a)))
+data Behavior a = B (M  (a, Event (Behavior a)))
                 | Const a
 
-runB :: Behavior a -> Env (a, Event (Behavior a))
+runB :: Behavior a -> M  (a, Event (Behavior a))
 runB (Const x) = return (x, never)
 runB (B m)     = m
 
-curB :: Behavior a -> Env a
+curB :: Behavior a -> M a
 curB b = fst <$> runB b
 
 instance Monad Behavior where
@@ -222,7 +102,7 @@ instance Monad Behavior where
 switch :: Behavior a -> Event (Behavior a) -> Behavior a
 switch b Never   = b
 switch _ (Occ b) = b
-switch b e   = memoB $ runEvent e >>= \case
+switch b e   = memoB $ runE e >>= \case
    Occ   x -> runB x                 
    Never   -> runB b
    _       -> do (h,t) <- runB b
@@ -252,21 +132,21 @@ whenJust b = memoB $
       Nothing -> do en <- planM (runB (whenJust b) <$ t)
                     return (en >>= fst, en >>= snd)
 
-againB :: (a, Event (Behavior a)) -> Env (a, Event (Behavior a))
-againB (h,t) = runEvent t >>= \case
+rerunB :: (a, Event (Behavior a)) -> M (a, Event (Behavior a))
+rerunB (h,t) = runE t >>= \case
       Occ x -> runB x
       Never     -> return (h,Never)
       t'        -> return (h,t')
 
-memoB :: Env (a, Event (Behavior a)) -> Behavior a
-memoB m = B (again againB m)
+memoB :: M (a, Event (Behavior a)) -> Behavior a
+memoB m = B (again rerunB m)
 
 
 instance Swap Behavior Event  where 
    swap Never = pure Never
    swap (Occ x) = Occ <$> x
    swap e       = B $
-       runEvent e >>= \case
+       runE e >>= \case
          Never -> return (Never, Never)
          Occ x -> runB (Occ <$> x)
          _    -> do ev <- planM (runB <$> e)  
@@ -280,13 +160,14 @@ instance Applicative Behavior where
   (<*>) = ap
 
 
+
 -- Memo stuff:
 
-unsafeMemoAgain :: (x -> Env  x) -> Env  x -> Env  x
+unsafeMemoAgain :: (x -> M  x) -> M x -> M x
 unsafeMemoAgain again m = unsafePerformIO $ runMemo <$> newIORef (Nothing, m) where
    runMemo mem = 
     do r <- getRound
-       (v,m) <- stIO $ readIORef mem 
+       (v,m) <- liftIO $ readIORef mem 
        res <- case v of
          Just (p,val) -> 
            case compare p r of
@@ -294,5 +175,122 @@ unsafeMemoAgain again m = unsafePerformIO $ runMemo <$> newIORef (Nothing, m) wh
             EQ -> return val
             GT -> error "non monotonic sampling!!"
          Nothing -> m
-       stIO $ writeIORef mem (Just (r,res), again res)
+       liftIO $ writeIORef mem (Just (r,res), again res)
        return res
+
+
+-- unexported helper functions
+
+getRound :: N Round
+getRound = ask >>= liftIO . curRound
+
+addPlan :: Plan -> N ()
+addPlan p = tell (singleton p)
+
+
+-- Start main loop
+
+type Plans = Seq Plan
+type PlanState a = IORef (Either (Event (N a)) a)
+data Plan = forall a. Plan (Ref (PlanState a))
+
+type M = WriterT Plans (ReaderT Clock IO)
+
+data SomePlanState = forall a. SomePlanState (PlanState a)
+
+tryPlan :: Plan -> SomePlanState -> N  ()
+tryPlan p (SomePlanState r) = tryAgain r >>= \case
+             Occ  _  -> return ()
+             Never   -> return ()
+             E _     -> addPlan p
+
+
+makeStrongRefs :: Plans -> N   [(Plan, SomePlanState)] 
+makeStrongRefs pl = catMaybes <$> mapM makeStrongRef (toList pl) where
+ makeStrongRef :: Plan -> N  (Maybe (Plan, SomePlanState))
+ makeStrongRef (Plan r) = liftIO (deRef r) >>= return . \case
+         Just e  -> Just (Plan r, SomePlanState e)
+         Nothing -> Nothing
+
+tryPlans :: Plans -> N  ()
+tryPlans pl = 
+  do pl' <- makeStrongRefs pl 
+     -- stIO $ putStrLn ("nrplans " ++ show (length pl'))
+     mapM_ (uncurry tryPlan) pl'
+
+runN :: Clock -> N a ->  IO (a,Plans)
+runN c m = runReaderT (runWriterT m) c
+
+runNow :: Now (Event a) -> IO a 
+runNow m = newClock >>= runReaderT start where
+  start = do  (ev,pl) <- runWriterT (toN m)
+              loop ev pl
+  loop :: Event a -> Plans -> ReaderT Clock IO a
+  loop ev pli =
+   do  (er,ple) <- runWriterT (runE ev) 
+       let pl = pli >< ple
+       case er of
+         Occ x   -> return x
+         ev' -> 
+           do  endRound
+               ((), pl') <- runWriterT (tryPlans pl) 
+               loop ev' pl' 
+  endRound = ask >>= liftIO . waitEndRound 
+
+
+-- Plan stuff
+
+planM = makePlanRef makeWeakIORef
+
+
+
+makePlanRef :: (forall a. IORef a -> IO (Ref (IORef a))) -> Event (N a) -> N (Event a)
+makePlanRef makeRef e   = runE e >>= \case
+  Never -> return Never
+  Occ m -> return <$> m
+  e'    -> do r <- liftIO $ newIORef (Left e')
+              let res = E $ tryAgain r
+              ref <- liftIO $ makeRef r
+              addPlan (Plan ref)
+              return res
+
+
+tryAgain :: PlanState a -> N (Event a)
+tryAgain r = 
+   let x = do liftIO (readIORef r) >>= \case 
+               Right x -> return (Occ x)  
+               Left e -> runE e >>= \case
+                 Never -> return Never
+                 Occ m -> do res <- m
+                             liftIO $ writeIORef r (Right res)
+                             return (Occ res)
+                 e'    -> do liftIO $ writeIORef r (Left e)
+                             return (E x)
+  in x
+        
+
+
+-- Start IO Stuff 
+
+newtype Now a = Now {toN :: N a} deriving (Functor,Applicative,Monad)
+
+sample :: Behavior a -> Now a
+sample b = Now $ curB b
+   
+async :: IO a -> Now (Event a)
+async m = Now $   
+  do c <- ask
+     pe <- liftIO $ spawn c m
+     return $ fromMaybeM $ (pe `observeAt`) <$> getRound
+
+
+instance Swap Now Event where
+ swap e = Now $ planN (toN <$> e) 
+
+planN :: Event (N a) -> N (Event a)
+planN e = makePlanRef makeStrongRef e
+
+-- occasionally handy for debugging
+
+unsafeSyncIO :: IO a -> Now a
+unsafeSyncIO m = Now $ liftIO m              

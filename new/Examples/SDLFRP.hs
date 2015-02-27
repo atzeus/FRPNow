@@ -130,14 +130,17 @@ drawAll :: SDL.Surface -> Behavior [Box] -> Now ()
 drawAll screen b = loop where
   loop :: Now ()
   loop =
-   do v <- cur b
-      e <- cur $ change b
+   do v <- sample b
+      e <- sample $ change b
       e' <- async $ drawBoxes screen v
       plan (loop <$ (e >> e'))
       return ()
 
 getEvents ::  Now (Stream SDL.Event )
-getEvents = repeatEvN $ async ioWaitEvents
+getEvents = repeatIOList ioWaitEvents
+
+quitEv :: Stream SDL.Event -> Behavior (Event ())
+quitEv s = (() <$) <$> (next $ filterStream (SDL.Quit ==) s)
 
 
 
