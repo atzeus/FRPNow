@@ -1,4 +1,4 @@
-{-# LANGUAGE  Rank2Types,OverlappingInstances, DeriveFunctor,TupleSections,TypeOperators,MultiParamTypeClasses, FlexibleInstances,TypeSynonymInstances, LambdaCase, ExistentialQuantification, GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE  RecursiveDo, Rank2Types,OverlappingInstances, DeriveFunctor,TupleSections,TypeOperators,MultiParamTypeClasses, FlexibleInstances,TypeSynonymInstances, LambdaCase, ExistentialQuantification, GeneralizedNewtypeDeriving #-}
 module Impl.FRPNow(Behavior, Event, Now, never, whenJust, switch, sample, async, runNow, unsafeSyncIO) where
 
 import Control.Monad.Writer hiding (mapM_)
@@ -98,6 +98,7 @@ instance Monad Behavior where
     do (h,t) <- runB b
        (fh,th) <- runB (f h)
        return (fh, switchEv th ((b >>= f) <$ t))
+
             
 switch :: Behavior a -> Event (Behavior a) -> Behavior a
 switch b Never   = b
@@ -166,17 +167,19 @@ instance Applicative Behavior where
 unsafeMemoAgain :: (x -> M  x) -> M x -> M x
 unsafeMemoAgain again m = unsafePerformIO $ runMemo <$> newIORef (Nothing, m) where
    runMemo mem = 
-    do r <- getRound
-       (v,m) <- liftIO $ readIORef mem 
-       res <- case v of
+    -- use mdo notation such that we can obtain the result of this computation in the 
+    -- computation m...
+    mdo r <- getRound
+        (v,m) <- liftIO $ readIORef mem
+        liftIO $ writeIORef mem (Just (r,res), again res) 
+        res <- case v of
          Just (p,val) -> 
            case compare p r of
             LT -> m
             EQ -> return val
             GT -> error "non monotonic sampling!!"
          Nothing -> m
-       liftIO $ writeIORef mem (Just (r,res), again res)
-       return res
+        return res
 
 
 -- unexported helper functions
@@ -240,7 +243,7 @@ runNow m = newClock >>= runReaderT start where
 
 -- Plan stuff
 
-planM = makePlanRef makeWeakIORef
+planM = makePlanRef makeStrongRef -- makePlanRef makeWeakIORef
 
 
 
