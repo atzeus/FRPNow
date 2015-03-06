@@ -1,4 +1,5 @@
 To run the examples
+
 (Note : It seems SDL 1.2 on OS X is broken :( Please try on Linux or Windows))
 
 * Install libsdl (https://www.libsdl.org/). On debian/ubuntu this is sudo apt-get instal libsdl1.2-dev 
