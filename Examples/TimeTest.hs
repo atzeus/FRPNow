@@ -9,11 +9,11 @@ import Control.Monad hiding (when)
 import System.Time
 
 n = 11000
-main = runFRP test  
+main = runNow test  
 
 test :: Now (Event ())
 test = do  b <- count
-           cur (when ((n ==) <$> b))
+           sample (when ((n ==) <$> b))
 
 count :: Now (Behavior Int)
 count = loop 0 where
