@@ -14,8 +14,8 @@ import qualified Data.Set as S
 import Prelude hiding (until)
 import Graphics.UI.SDL.Time
 
-nrBoxes = 20
-timeDelay = 0.1 -- seconds
+nrBoxes = 10
+timeDelay = 0.5 -- seconds
 
 -- todo : interpolate boxes
 
