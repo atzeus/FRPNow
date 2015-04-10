@@ -3,7 +3,6 @@
 module Examples.SDLFRP where
 
 import qualified Graphics.UI.SDL as SDL
-import Graphics.UI.SDL.Keysym
 import Control.Applicative hiding (empty)
 import Control.Monad hiding (when)
 import FRPNow 
@@ -15,13 +14,15 @@ import Data.Word
 -- IO stuff
 
 initSDL = do  SDL.init [SDL.InitEverything]
+              SDL.enableEvent SDL.SDLMouseMotion True
               SDL.setVideoMode 800 600 32 [SDL.DoubleBuf]
               SDL.getVideoSurface
 
 
 ioWaitEvents :: IO [SDL.Event]
-ioWaitEvents = do h <- SDL.waitEvent
+ioWaitEvents = do h <- SDL.waitEventBlocking
                   t <- getEventsIO
+                  --putStr (show (h:t))
                   return (h : t)
 
 

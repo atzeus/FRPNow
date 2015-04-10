@@ -23,7 +23,7 @@ import Impl.PrimEv
 -- comment/uncomment here to disable optimization
 again :: (x -> M  x) -> M x -> M x
 again = unsafeMemoAgain
---again f m = m 
+--again f m = m
 
 
 type N = M
@@ -53,12 +53,12 @@ fromMaybeM m =
            Just x -> Occ x
            _      -> x
   in x
-   
+
 never :: Event a
 never = Never
 
 instance Monad Event where
-  return = Occ 
+  return = Occ
   Never    >>= f = Never
   (Occ x)  >>= f = f x
   ev    >>= f = memoE $
@@ -93,18 +93,18 @@ curB b = fst <$> runB b
 
 instance Monad Behavior where
   return = Const
-  (Const x) >>= f = f x 
+  (Const x) >>= f = f x
   b     >>= f = memoB $
     do (h,t) <- runB b
        (fh,th) <- runB (f h)
        return (fh, switchEv th ((b >>= f) <$ t))
 
-            
+
 switch :: Behavior a -> Event (Behavior a) -> Behavior a
 switch b Never   = b
 switch _ (Occ b) = b
 switch b e   = memoB $ runE e >>= \case
-   Occ   x -> runB x                 
+   Occ   x -> runB x
    Never   -> runB b
    _       -> do (h,t) <- runB b
                  return (h, switchEv t e)
@@ -114,10 +114,10 @@ switchEv l Never     = l
 switchEv l (Occ r)   = Occ r
 switchEv Never r     = r
 switchEv (Occ x) r   = Occ (x `switch` r)
-switchEv (E l) (E r) = E $ 
+switchEv (E l) (E r) = E $
   r >>= \case
     Occ y -> return $ Occ y
-    r' -> l >>= return . \case 
+    r' -> l >>= return . \case
            Occ x -> Occ (x `switch` r')
            l'    -> switchEv l' r'
 
@@ -126,7 +126,7 @@ switchEv (E l) (E r) = E $
 whenJust :: Behavior (Maybe a) -> Behavior (Event a)
 whenJust (Const Nothing)  = pure never
 whenJust (Const (Just x)) = pure (pure x)
-whenJust b = memoB $ 
+whenJust b = memoB $
   do (h, t) <- runB b
      case h of
       Just x -> return (return x, whenJust b <$ t)
@@ -143,14 +143,14 @@ memoB :: M (a, Event (Behavior a)) -> Behavior a
 memoB m = B (again rerunB m)
 
 
-instance Swap Behavior Event  where 
+instance Swap Behavior Event  where
    swap Never = pure Never
    swap (Occ x) = Occ <$> x
    swap e       = B $
        runE e >>= \case
          Never -> return (Never, Never)
          Occ x -> runB (Occ <$> x)
-         _    -> do ev <- planM (runB <$> e)  
+         _    -> do ev <- planM (runB <$> e)
                     return (fst <$> ev, (Occ <$>) <$> (ev >>= snd))
 
 instance Functor Behavior where
@@ -166,14 +166,14 @@ instance Applicative Behavior where
 
 unsafeMemoAgain :: (x -> M  x) -> M x -> M x
 unsafeMemoAgain again m = unsafePerformIO $ runMemo <$> newIORef (Nothing, m) where
-   runMemo mem = 
-    -- use mdo notation such that we can obtain the result of this computation in the 
+   runMemo mem =
+    -- use mdo notation such that we can obtain the result of this computation in the
     -- computation m...
     mdo r <- getRound
         (v,m) <- liftIO $ readIORef mem
-        liftIO $ writeIORef mem (Just (r,res), again res) 
+        liftIO $ writeIORef mem (Just (r,res), again res)
         res <- case v of
-         Just (p,val) -> 
+         Just (p,val) ->
            case compare p r of
             LT -> m
             EQ -> return val
@@ -208,7 +208,7 @@ tryPlan p (SomePlanState r) = tryAgain r >>= \case
              E _     -> addPlan p
 
 
-makeStrongRefs :: Plans -> N   [(Plan, SomePlanState)] 
+makeStrongRefs :: Plans -> N   [(Plan, SomePlanState)]
 makeStrongRefs pl = catMaybes <$> mapM makeStrongRef (toList pl) where
  makeStrongRef :: Plan -> N  (Maybe (Plan, SomePlanState))
  makeStrongRef (Plan r) = liftIO (deRef r) >>= return . \case
@@ -216,29 +216,29 @@ makeStrongRefs pl = catMaybes <$> mapM makeStrongRef (toList pl) where
          Nothing -> Nothing
 
 tryPlans :: Plans -> N  ()
-tryPlans pl = 
-  do pl' <- makeStrongRefs pl 
+tryPlans pl =
+  do pl' <- makeStrongRefs pl
      -- stIO $ putStrLn ("nrplans " ++ show (length pl'))
      mapM_ (uncurry tryPlan) pl'
 
 runN :: Clock -> N a ->  IO (a,Plans)
 runN c m = runReaderT (runWriterT m) c
 
-runNow :: Now (Event a) -> IO a 
+runNow :: Now (Event a) -> IO a
 runNow m = newClock >>= runReaderT start where
   start = do  (ev,pl) <- runWriterT (toN m)
               loop ev pl
   loop :: Event a -> Plans -> ReaderT Clock IO a
   loop ev pli =
-   do  (er,ple) <- runWriterT (runE ev) 
+   do  (er,ple) <- runWriterT (runE ev)
        let pl = pli >< ple
        case er of
          Occ x   -> return x
-         ev' -> 
+         ev' ->
            do  endRound
-               ((), pl') <- runWriterT (tryPlans pl) 
-               loop ev' pl' 
-  endRound = ask >>= liftIO . waitEndRound 
+               ((), pl') <- runWriterT (tryPlans pl)
+               loop ev' pl'
+  endRound = ask >>= liftIO . waitEndRound
 
 
 -- Plan stuff
@@ -259,9 +259,9 @@ makePlanRef makeRef e   = runE e >>= \case
 
 
 tryAgain :: PlanState a -> N (Event a)
-tryAgain r = 
-   let x = do liftIO (readIORef r) >>= \case 
-               Right x -> return (Occ x)  
+tryAgain r =
+   let x = do liftIO (readIORef r) >>= \case
+               Right x -> return (Occ x)
                Left e -> runE e >>= \case
                  Never -> return Never
                  Occ m -> do res <- m
@@ -270,25 +270,33 @@ tryAgain r =
                  e'    -> do liftIO $ writeIORef r (Left e)
                              return (E x)
   in x
-        
 
 
--- Start IO Stuff 
+
+-- Start IO Stuff
 
 newtype Now a = Now {toN :: N a} deriving (Functor,Applicative,Monad)
 
 sample :: Behavior a -> Now a
 sample b = Now $ curB b
-   
+
+primEv2Ev :: PrimEv a -> Event a
+primEv2Ev pe = fromMaybeM $ (pe `observeAt`) <$> getRound
+
 async :: IO a -> Now (Event a)
-async m = Now $   
+async m = Now $
   do c <- ask
      pe <- liftIO $ spawn c m
-     return $ fromMaybeM $ (pe `observeAt`) <$> getRound
+     return (primEv2Ev pe)
 
+callback :: Now (Event a, a -> IO ())
+callback = Now $
+  do c <- ask
+     (pe, cb) <- liftIO $ getCallback c
+     return (primEv2Ev pe, cb)
 
 instance Swap Now Event where
- swap e = Now $ planN (toN <$> e) 
+ swap e = Now $ planN (toN <$> e)
 
 planN :: Event (N a) -> N (Event a)
 planN e = makePlanRef makeStrongRef e
@@ -296,4 +304,4 @@ planN e = makePlanRef makeStrongRef e
 -- occasionally handy for debugging
 
 unsafeSyncIO :: IO a -> Now a
-unsafeSyncIO m = Now $ liftIO m              
+unsafeSyncIO m = Now $ liftIO m

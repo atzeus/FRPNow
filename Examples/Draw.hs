@@ -28,6 +28,7 @@ main = do screen <- initSDL
                  buttons  <- sample $ toMouseButtonsDown evs
                  bxs <- sample (boxes mousePos buttons)
                  quit <- sample (quitEv evs)
+                 printAll evs
                  drawAll screen bxs
                  return quit
 
