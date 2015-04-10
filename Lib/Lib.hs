@@ -7,7 +7,6 @@ import Impl.FRPNow
 import Swap
 import Control.Applicative
 import Control.Monad hiding (when)
-
 import Prelude hiding (until)
 import Swap
 
@@ -15,7 +14,7 @@ import Swap
 
 
 cur :: Monad m => Behavior a -> (Behavior :. m) a
-cur = liftLeft  
+cur = liftLeft
 
 
 plan :: Swap b Event => Event (b a) -> b (Event a)
@@ -39,7 +38,7 @@ occ :: E a -> B (Maybe a)
 occ e = pure Nothing `switch` ((pure . Just) <$> e)
 
 first :: E a -> E a -> B (E a)
-first l r = whenJust (occ r `switch` ((pure . Just) <$> l)) 
+first l r = whenJust (occ r `switch` ((pure . Just) <$> l))
 
 countChanges :: Eq a => Behavior a -> Behavior (Behavior Int)
 countChanges b = loop 0 where
@@ -72,7 +71,7 @@ hasOccured e = pure False `switch` (pure True <$ e)
 
 change :: Eq a => Behavior a -> Behavior (Event ())
 change b = do v <- b ;
-              when ((v /=) <$> b) 
+              when ((v /=) <$> b)
 
 changeVal :: Eq a => Behavior a -> Behavior (Event a)
 changeVal b = do v <- b ;
@@ -95,18 +94,18 @@ sampleUntil b end  = loop [] where
                e <- hasOccured end
                if e then return (pure (reverse ss'))
                else do c <- change b
-                       join <$> plan (loop ss' <$ c)  
+                       join <$> plan (loop ss' <$ c)
 
 type E = Event
 
 plan' :: E (B a) -> B (E a)
-plan' e = whenJust (pure Nothing `switch` ((Just <$>) <$> e))                   
+plan' e = whenJust (pure Nothing `switch` ((Just <$>) <$> e))
 
 prev :: Eq a => a -> Behavior a -> Behavior (Behavior a)
 prev i b = (fst <$>) <$> foldB (\(_,p) c ->  (p,c)) (undefined,i) b
 
 
-type B = Behavior 
+type B = Behavior
 
 buffer :: Eq a => Int -> B a -> B (B [a])
 buffer n b = foldB (\l e -> take n (e : l)) [] b
@@ -137,8 +136,8 @@ data BehaviorEnd x a = Until { behavior :: Behavior x, end ::  Event a }
 
 instance Monad (BehaviorEnd x) where
   return x = pure (error "ended!") `Until` pure x
-  (b `Until` e) >>= f  = 
-     let v = f <$> e 
+  (b `Until` e) >>= f  =
+     let v = f <$> e
          b' = b `switch` (behavior <$> v)
          e' = v >>= end
      in b' `Until` e'
@@ -152,13 +151,15 @@ until :: (Monad b, Swap b (BehaviorEnd x)) =>
           Behavior x -> b (Event a) -> (b :. BehaviorEnd x) a
 until b e = liftLeft e >>= liftRight . (b `Until`)
 
-  
+
 
 instance Functor (BehaviorEnd x) where fmap = liftM
 instance Applicative (BehaviorEnd x) where pure = return ; (<*>) = ap
 
+
+
 -- debug thing
-          
+
 showChanges :: (Eq a, Show a) => Behavior a -> Now ()
 showChanges b = loop where
  loop = do v <- sample b

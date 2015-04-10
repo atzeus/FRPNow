@@ -1,5 +1,5 @@
 {-# LANGUAGE  RecursiveDo, Rank2Types,OverlappingInstances, DeriveFunctor,TupleSections,TypeOperators,MultiParamTypeClasses, FlexibleInstances,TypeSynonymInstances, LambdaCase, ExistentialQuantification, GeneralizedNewtypeDeriving #-}
-module Impl.FRPNow(Behavior, Event, Now, never, whenJust, switch, sample, async, runNow, unsafeSyncIO) where
+module Impl.FRPNow(Behavior, Event, Now, never, whenJust, switch, sample, async, callbackE, runNow, unsafeSyncIO) where
 
 import Control.Monad.Writer hiding (mapM_)
 import Control.Monad.Writer.Class
@@ -289,8 +289,8 @@ async m = Now $
      pe <- liftIO $ spawn c m
      return (primEv2Ev pe)
 
-callback :: Now (Event a, a -> IO ())
-callback = Now $
+callbackE :: Now (Event a, a -> IO ())
+callbackE = Now $
   do c <- ask
      (pe, cb) <- liftIO $ getCallback c
      return (primEv2Ev pe, cb)
