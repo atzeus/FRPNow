@@ -210,12 +210,14 @@ callStream f evs = do e2 <- sample (nextSim evs)
                planNow (again <$> (e2 >> e))
                return ()
 
-callIOStream :: (a -> IO a) -> Stream a -> Now ()
-callIOStream f = callStream (\x -> async (mapM_ f x))               
+callIOStream :: (a -> IO ()) -> Stream a -> Now ()
+callIOStream f = callStream (\x -> async (mapM_ f x))
+
+callSyncIOStream :: (a -> IO ()) -> Stream a -> Now ()
+callSyncIOStream = callStream (\x -> unsafeSyncIO (mapM_ f x) >> return (pure ()))
 
 printAll :: (Show a, Eq a) => Stream a -> Now ()
-printAll = callStream (\l -> unsafeSyncIO $ mapM_ (putStrLn . show) l >> return (pure ()))
-
+printAll = callSyncIOStream (putStrLn . show) 
 {-
 -- See reflection without remorse for which performance problem this construction solves...
 
