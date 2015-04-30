@@ -1,5 +1,5 @@
 {-# LANGUAGE  RecursiveDo, Rank2Types,OverlappingInstances, DeriveFunctor,TupleSections,TypeOperators,MultiParamTypeClasses, FlexibleInstances,TypeSynonymInstances, LambdaCase, ExistentialQuantification, GeneralizedNewtypeDeriving #-}
-module Impl.FRPNow(Behavior, Event, Now, never, whenJust, switch, sample, async, callbackE, runNow, unsafeSyncIO) where
+module Impl.FRPNow(Behavior, Event, Now, never, whenJust, switch, sample, async, runNow, unsafeLazy, callbackE ,unsafeSyncIO) where
 
 import Control.Monad.Writer hiding (mapM_)
 import Control.Monad.Writer.Class
@@ -15,6 +15,7 @@ import Data.Maybe
 import System.IO.Unsafe -- only for unsafeMemoAgain at the bottom
 import Debug.Trace
 import Prelude hiding (mapM_)
+import Data.Either
 
 import Swap
 import Impl.Ref
@@ -188,8 +189,11 @@ getRound :: N Round
 getRound = ask >>= liftIO . curRound
 
 addPlan :: Plan -> N ()
-addPlan p = tell (singleton p)
+addPlan p = lift $  tell (singleton p)
 
+
+addLazy :: Lazy -> N ()
+addLazy p = tell (singleton  p)
 
 -- Start main loop
 
@@ -197,16 +201,38 @@ type Plans = Seq Plan
 type PlanState a = IORef (Either (Event (N a)) a)
 data Plan = forall a. Plan (Ref (PlanState a))
 
-type M = WriterT Plans (ReaderT Clock IO)
+type Lazies = Seq Lazy
+data Lazy = forall a. Lazy (N a) (IORef a)
+
+type M = WriterT Lazies (WriterT Plans (ReaderT Clock IO))
 
 data SomePlanState = forall a. SomePlanState (PlanState a)
+
+
+makeLazy :: N a -> N (Event a)
+makeLazy m = do  n <- getRound
+                 r <- liftIO (newIORef undefined)
+                 addLazy (Lazy m r)
+                 return (readLazyState n r)
+
+readLazyState :: Round -> IORef a -> Event a
+readLazyState n r =
+  let x = E $
+       do m <- getRound
+          if n == m
+          then return x
+          else Occ <$> liftIO (readIORef r)
+  in x
+
+executeLazy :: Lazy -> N ()
+executeLazy (Lazy m r) = m >>= liftIO . writeIORef r
+
 
 tryPlan :: Plan -> SomePlanState -> N  ()
 tryPlan p (SomePlanState r) = tryAgain r >>= \case
              Occ  _  -> return ()
              Never   -> return ()
              E _     -> addPlan p
-
 
 makeStrongRefs :: Plans -> N   [(Plan, SomePlanState)]
 makeStrongRefs pl = catMaybes <$> mapM makeStrongRef (toList pl) where
@@ -222,28 +248,40 @@ tryPlans pl =
      mapM_ (uncurry tryPlan) pl'
 
 runN :: Clock -> N a ->  IO (a,Plans)
-runN c m = runReaderT (runWriterT m) c
+runN c m = runReaderT (runLazies m) c
+
+runLazies ::  WriterT Lazies (WriterT Plans (ReaderT Clock IO)) a -> ReaderT Clock IO (a, Plans)
+runLazies m = runWriterT $
+              do  (val, lazies) <- runWriterT m
+                  elimLazies lazies
+                  return val
+
+elimLazies :: Lazies -> WriterT Plans (ReaderT Clock IO) ()
+elimLazies s = case toList s of
+               [] -> return ()
+               s'-> do (_,ls) <- runWriterT (mapM_ executeLazy s')
+                       elimLazies ls
 
 runNow :: Now (Event a) -> IO a
 runNow m = newClock >>= runReaderT start where
-  start = do  (ev,pl) <- runWriterT (toN m)
+  start = do  (ev,pl) <- runLazies (toN m)
               loop ev pl
   loop :: Event a -> Plans -> ReaderT Clock IO a
   loop ev pli =
-   do  (er,ple) <- runWriterT (runE ev)
+   do  (er,ple) <- runLazies (runE ev)
        let pl = pli >< ple
        case er of
          Occ x   -> return x
          ev' ->
            do  endRound
-               ((), pl') <- runWriterT (tryPlans pl)
+               ((), pl') <- runLazies (tryPlans pl)
                loop ev' pl'
   endRound = ask >>= liftIO . waitEndRound
 
 
 -- Plan stuff
 
-planM = makePlanRef makeStrongRef -- makePlanRef makeWeakIORef
+planM = makePlanRef makeWeakIORef
 
 
 
@@ -280,26 +318,31 @@ newtype Now a = Now {toN :: N a} deriving (Functor,Applicative,Monad)
 sample :: Behavior a -> Now a
 sample b = Now $ curB b
 
-primEv2Ev :: PrimEv a -> Event a
-primEv2Ev pe = fromMaybeM $ (pe `observeAt`) <$> getRound
-
 async :: IO a -> Now (Event a)
 async m = Now $
   do c <- ask
      pe <- liftIO $ spawn c m
-     return (primEv2Ev pe)
+     return (fromPrimEv pe)
 
 callbackE :: Now (Event a, a -> IO ())
 callbackE = Now $
   do c <- ask
-     (pe, cb) <- liftIO $ getCallback c
-     return (primEv2Ev pe, cb)
+     (pe,cb) <- liftIO $ getCallback c
+     return (fromPrimEv pe, cb)
+
+fromPrimEv :: PrimEv a -> Event a
+fromPrimEv pe = fromMaybeM $ (pe `observeAt`) <$> getRound
 
 instance Swap Now Event where
  swap e = Now $ planN (toN <$> e)
 
 planN :: Event (N a) -> N (Event a)
 planN e = makePlanRef makeStrongRef e
+
+unsafeLazy :: Behavior (Event a) -> Behavior (Event a)
+unsafeLazy m = B $
+   do e <- makeLazy (runB m)
+      return (e >>= fst, e >>= snd)
 
 -- occasionally handy for debugging
 

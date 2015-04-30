@@ -9,6 +9,7 @@ import Control.Applicative
 import Control.Monad hiding (when)
 import Prelude hiding (until)
 import Swap
+import Debug.Trace
 
 
 
@@ -163,7 +164,7 @@ instance Applicative (BehaviorEnd x) where pure = return ; (<*>) = ap
 showChanges :: (Eq a, Show a) => Behavior a -> Now ()
 showChanges b = loop where
  loop = do v <- sample b
-           unsafeSyncIO $ putStrLn (show v)
+           unsafeSyncIO $ traceIO (show v)
            e <- sample $ change b
            plan (loop <$ e)
            return ()

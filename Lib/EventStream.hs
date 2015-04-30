@@ -2,12 +2,14 @@
 
 module Lib.EventStream
 (Stream, next, nextSim, repeatEv, repeatIO, repeatIOList, merge, fmapB, filterJusts, filterEv, filterMapB, toChanges,
-  filterB, during,sampleOn, scanlEv, filterStream, foldr1Ev, foldrEv, foldrSwitch, foldB, fold, parList, bufferStream, fromChanges, printAll)
+  filterB, during,sampleOn, scanlEv, filterStream, foldr1Ev, foldrEv, foldrSwitch, foldB, fold, parList, bufferStream, fromChanges,
+ callbackStream, callStream, callIOStream, callSyncIOStream, printAll)
   where
 
 import Data.Maybe
 import Control.Monad hiding (when)
 import Control.Applicative hiding (empty)
+import Control.Concurrent
 
 import Data.Sequence hiding (reverse,scanl,take)
 import Prelude hiding (until,length)
@@ -17,6 +19,7 @@ import Control.Concurrent.MVar
 import Swap
 import Impl.FRPNow
 import Lib.Lib
+import Debug.Trace
 
 newtype Stream a = S { getEs :: Behavior (Event [a]) }
 
@@ -24,10 +27,10 @@ instance Functor Stream where
   fmap f (S b) = S $ (fmap f <$>) <$> b
 
 next :: Stream a -> B (E a)
-next (S s) = (head <$>) <$> s
+next s = (head <$>) <$> (nextSim s)
 
 nextSim :: Stream a -> Behavior (Event [a])
-nextSim e = getEs e
+nextSim e = unsafeLazy $  getEs e
 
 
 
@@ -173,32 +176,35 @@ toChanges i (S x) = loop i where
               return (i `step` e')
 
 
-
-
 -- give an event stream that has an event each time the
 -- returned function is called
 -- useful for interfacing with callback-based
 -- systems
-callbackStreamSim :: Now (Stream a, [a] -> IO ())
-callbackStreamSim = init where
-  init = do cbm <- unsafeSyncIO $ newEmptyMVar
-            b <- changeCallback cbm
-            return (S b, func cbm)
-
-  changeCallback :: MVar ([a] -> IO ()) -> Now (Behavior (Event [a]))
-  changeCallback cbm =
-     do (ev,cb) <- callbackE
-        unsafeSyncIO $ putMVar cbm cb
-        ev'<- planNow (changeCallback cbm <$ ev)
-        return (ev `step` ev')
-
-  func :: MVar ([a] -> IO ()) -> [a] -> IO ()
-  func mv x = do f <- takeMVar mv
-                 f x
-
 callbackStream :: Now (Stream a, a -> IO ())
-callbackStream = do (s,cb) <- callbackStreamSim
-                    return (s, cb . (\x -> [x]))
+callbackStream = do mv <- unsafeSyncIO $ newMVar ([], Nothing)
+                    (_,s) <- loop mv
+                    return (S s, func mv) where
+  loop mv =
+         do -- unsafeSyncIO $ traceIO "take2"
+            (l, Nothing) <- unsafeSyncIO $ takeMVar mv
+            (e,cb) <- callbackE
+            unsafeSyncIO $ putMVar mv ([], Just cb)
+            -- unsafeSyncIO $ traceIO "rel2"
+            es <- planNow $ loop mv <$ e
+            let h = fst <$> es
+            let t = snd <$> es
+            return (reverse l, h `step` t)
+
+  func mv x =
+    do -- traceIO "take"
+       (l,mcb) <- takeMVar mv
+       putMVar mv (x:l, Nothing)
+       -- traceIO "release!"
+       case mcb of
+         Just x -> x ()
+         Nothing -> return ()
+       yield
+
 
 -- call the given function each time an event occurs
 callStream :: ([a] -> Now (Event ())) -> Stream a -> Now ()
@@ -214,10 +220,10 @@ callIOStream :: (a -> IO ()) -> Stream a -> Now ()
 callIOStream f = callStream (\x -> async (mapM_ f x))
 
 callSyncIOStream :: (a -> IO ()) -> Stream a -> Now ()
-callSyncIOStream = callStream (\x -> unsafeSyncIO (mapM_ f x) >> return (pure ()))
+callSyncIOStream f = callStream (\x -> unsafeSyncIO (mapM_ f x) >> return (pure ()))
 
 printAll :: (Show a, Eq a) => Stream a -> Now ()
-printAll = callSyncIOStream (putStrLn . show) 
+printAll = callSyncIOStream (\x -> traceIO (show x))
 {-
 -- See reflection without remorse for which performance problem this construction solves...
 

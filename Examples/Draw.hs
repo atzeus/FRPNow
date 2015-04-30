@@ -5,32 +5,33 @@ import qualified Graphics.UI.SDL as SDL
 import Control.Monad.Fix
 import Control.Applicative hiding (empty)
 import Control.Monad hiding (when)
-import FRPNow 
-import Examples.SDLFRP
+import FRPNow
+import Examples.WXFRP
+import qualified Graphics.UI.WX as WX
+import Examples.SimpleGraphics
 import Debug.Trace
 import Data.Maybe
 import Data.Set hiding (filter,fold, foldl,map)
 import Prelude hiding (until)
 
 {- Very simple drawing program
-
    hold down the left mouse button to draw a box
    delete a box by clicking on it with the right mouse button
    drag a box with the middle mouse button
-
 -}
 
 
-main = do screen <- initSDL
-          runNow $
-              do evs <- getEvents
+main = runNow $
+            mdo
+                 (cb, evs, _ ,evq) <- createFrame 800 600
                  mousePos <- sample $ toMousePos evs
                  buttons  <- sample $ toMouseButtonsDown evs
                  bxs <- sample (boxes mousePos buttons)
-                 quit <- sample (quitEv evs)
-                 printAll evs
-                 drawAll screen bxs
-                 return quit
+                 callSyncIOStream cb (fromChanges bxs)
+                 quit <- sample (next evq)
+                 --printAll evs
+                 --drawAll screen bxs
+                 return never
 
 
 
@@ -48,7 +49,7 @@ boxes mousePos buttons = parList ( box `sampleOn` clicks MLeft )
         r  <- cur $ movableRect r
         let mo = mouseOver r
         let toColor True  = green
-            toColor False = red 
+            toColor False = red
         let color = toColor <$> mo
         (Box  <$> r <*> color)  `until`  clickOn r MRight
 
@@ -74,12 +75,12 @@ boxes mousePos buttons = parList ( box `sampleOn` clicks MLeft )
   mouseOver r = isInside <$> mousePos <*> r
 
   clicks :: MouseBtn -> Stream ()
-  clicks m   = repeatEv $ click m 
+  clicks m   = repeatEv $ click m
   releases m = repeatEv $ release m
   click m   = becomesTrue $ isDown m
   release m = becomesTrue $ not <$> isDown m
   isDown m  = (m `member`) <$> buttons
 
+{-
 
-
-
+-}

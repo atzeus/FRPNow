@@ -11,6 +11,7 @@ import Control.Applicative hiding (empty)
 import Data.Time.Clock.POSIX
 import Control.Concurrent
 import Data.Foldable
+import Debug.Trace
 
 -- seconds
 type Time = Double
@@ -23,12 +24,13 @@ getElapsedTimeSeconds :: IO Time
 getElapsedTimeSeconds =  fromRational . toRational <$> getPOSIXTime
 
 waitSeconds :: Duration -> IO ()
-waitSeconds d = threadDelay (round (d * 1000000)) 
+waitSeconds d = traceIO "gonna wait" >> threadDelay (round (d * 1000000)) >> traceIO "Bla"
 
 getClock :: Duration -> Now (Behavior Time)
 getClock minDelta = loop where
- loop = 
-   do now <- unsafeSyncIO $ getElapsedTimeSeconds 
+ loop =
+   do now <- unsafeSyncIO $ getElapsedTimeSeconds
+
       e <- async (waitSeconds minDelta)
       e' <- plan (loop <$ e)
       return (pure now `switch` e')
@@ -49,20 +51,20 @@ addSample (i,ss) s = (i, ss |> s)
 
 
 afterTime :: Time -> History a  -> History a
-afterTime t (a,s) = 
+afterTime t (a,s) =
  case viewl s of
    EmptyL -> (a, empty)
-   (ts,x) :< f -> if ts <= t 
-                  then afterTime t (x,f) 
+   (ts,x) :< f -> if ts <= t
+                  then afterTime t (x,f)
                   else (a,s)
 
 deltaTime :: Behavior Time -> Behavior (Event Time)
 deltaTime time = do now <- time
-                    ((\x -> x - now) <$>) <$> changeVal time 
+                    ((\x -> x - now) <$>) <$> changeVal time
 
 
 integral :: Behavior Time -> Behavior Double -> Behavior (Behavior Double)
-integral time b = 
+integral time b =
   do cur <- b
      dt <- deltaTime time
      e <- plan (loop cur 0 <$> dt)
@@ -79,18 +81,18 @@ buffertime time d s = do evs <- scanlEv addDrop empty times
   where times = fmapB ((,) <$> time) s
         addDrop l (t,s) = dropBefore (t - d) (l |> (t,s))
         dropBefore :: Time -> Seq (Time,a) -> Seq (Time,a)
-        dropBefore t l = 
+        dropBefore t l =
           case viewl l of
             EmptyL -> empty
             (ts,a) :< tl | ts < t    -> dropBefore t tl
                          | otherwise -> l
-                         
+
 record2 :: Eq a => Behavior Time -> Behavior a -> Duration -> Behavior (Stream (History a))
 record2 time b d = b >>= histories
  where samples = ((,) <$> time) `fmapB` fromChanges b
        addNext h (t,s) = afterTime (t - d) (addSample h (t,s))
        histories i = scanlEv addNext (i,empty) samples
-       
+
 
 record :: Behavior Time -> Behavior a -> Duration -> Behavior (Stream (History a))
 record time b d = b >>= histories
@@ -104,4 +106,3 @@ delayBy time b d = do bufs <- record time b d
                       let pastVals = fmap (\(i,_) -> pure i) bufs
                       e <- foldr1Ev switch pastVals
                       return (pure a `switch` e)
-

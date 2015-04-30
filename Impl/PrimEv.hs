@@ -1,5 +1,5 @@
 {-# LANGUAGE LambdaCase  #-}
-module Impl.PrimEv(Round, Clock, PrimEv, newClock , spawn, curRound, waitEndRound ,observeAt,getCallback ) where
+module Impl.PrimEv(Round, Clock, PrimEv, newClock , spawn, spawnOS, curRound, waitEndRound ,observeAt,getCallback ) where
 
 import Impl.ConcFlag
 import Control.Concurrent.MVar
@@ -7,6 +7,7 @@ import Control.Applicative
 import System.IO.Unsafe
 import Data.Unique
 import Control.Concurrent
+import Debug.Trace
 
 data Clock    = Clock Unique Flag (MVar Integer)
 data Round    = Round Unique Integer
@@ -16,7 +17,8 @@ newClock :: IO Clock
 newClock = Clock <$> newUnique <*> newFlag <*> newMVar 0
 
 -- give an event that occurs when the also
--- returned function is called
+-- returned IO action is executed for the first time
+-- calls to the function afterwards will give an error
 -- useful for interfacing with callback-based
 -- systems
 getCallback :: Clock -> IO (PrimEv a, a -> IO ())
@@ -24,9 +26,13 @@ getCallback (Clock u flag round) =
   do mv <- newMVar Nothing
      return (PrimEv u mv, setValue mv)
   where setValue mv x =
-         do i <- takeMVar round
-            let i' = Round u (i + 1)
-            swapMVar mv (Just (i', x))
+         do
+            i <- takeMVar round
+            v <- takeMVar mv
+            let v' = case v of
+                      Just _ -> error "Already called callback!"
+                      _      -> Just (Round u (i + 1), x)
+            putMVar mv v'
             putMVar round i
             signal flag
 
@@ -37,6 +43,11 @@ spawn c m =
      forkIO $ m >>= call
      return pe
 
+spawnOS :: Clock -> IO a -> IO (PrimEv a)
+spawnOS c m =
+  do (pe, call) <- getCallback c
+     forkOS $ m >>= call 
+     return pe
 
 curRound :: Clock -> IO Round
 curRound (Clock u _ c) = Round u <$> readMVar c
@@ -44,8 +55,10 @@ curRound (Clock u _ c) = Round u <$> readMVar c
 waitEndRound :: Clock -> IO ()
 waitEndRound (Clock u f c) =
    do waitForSignal f
+      yield
       i <- takeMVar c
       putMVar c (i+1)
+      --putStrLn "Got it!"
 
 
 observeAt :: PrimEv a -> Round -> Maybe a
