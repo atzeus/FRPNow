@@ -164,7 +164,7 @@ instance Applicative (BehaviorEnd x) where pure = return ; (<*>) = ap
 showChanges :: (Eq a, Show a) => Behavior a -> Now ()
 showChanges b = loop where
  loop = do v <- sample b
-           unsafeSyncIO $ traceIO (show v)
+           syncIO $ traceIO (show v)
            e <- sample $ change b
            plan (loop <$ e)
            return ()

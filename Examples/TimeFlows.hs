@@ -1,7 +1,6 @@
 {-# LANGUAGE TypeOperators, ViewPatterns, RecursiveDo, ScopedTypeVariables #-}
 
 
-import qualified Graphics.UI.SDL as SDL
 import Control.Monad.Fix
 import Control.Applicative hiding (empty)
 import Control.Monad hiding (when)
@@ -14,24 +13,20 @@ import Data.Maybe
 import Data.Set hiding (filter,fold, foldl,map)
 import qualified Data.Set as S
 import Prelude hiding (until)
-import Graphics.UI.SDL.Time
 
-nrBoxes = 10
+nrBoxes = 2
 timeDelay = 0.5 -- seconds
 
 -- todo : interpolate boxes
 
-main =
-          runNow $
-              do (cb, evs, _ ,evq) <- createFrame 800 600
-                 clock <- getClock (1.0)
-                 mousePos <- sample $ toMousePos evs
-                 buttons  <- sample $ toMouseButtonsDown evs
+main = WX.start $ runNowSlave $
+            mdo  mousePos <- toChanges (0,0) moveEvs
+                 now <- syncIO getElapsedTimeSeconds
+                 clock <- toChanges now ticks
+                 buttons   <- sample $ fold updateSet empty btnEvs
                  bxs <- sample (timeflows nrBoxes timeDelay clock mousePos buttons)
-                 callSyncIOStream cb (fromChanges bxs)
-                 showChanges clock
-                 --drawAll screen bxs
-                 sample (next evq)
+		 (moveEvs, btnEvs,ticks) <- boxWindowTimer "Hullo" 800 600 20 bxs
+                 return ()
 
 
 iteratenM :: Monad m => (a -> m a) -> a -> Integer -> m [a]
@@ -43,7 +38,7 @@ iteratenM f a n
 
 
 
-
+mixi f l r = lerpColor l f r
 
 timeflows :: Integer -> Double -> Behavior Time -> Behavior Point -> Behavior (Set MouseBtn) -> Behavior (Behavior [Box])
 timeflows n d clock mousePos buttons =
@@ -56,10 +51,10 @@ timeflows n d clock mousePos buttons =
 
   fadeOut l = zipWith fade [0..] l where
     fac = 1.0 / fromIntegral n
-    fade i (Box r c) = Box r (mixi (i * fac) c black)
+    fade i (Box c r) = Box  (mixi (i * fac) c white) r
 
   box :: Behavior Box
-  box = Box <$> (rectAt (50,50) <$> mousePos) <*> (btnsToColor <$> buttons)
+  box = Box <$> (btnsToColor <$> buttons) <*> (rectAt (50,50) <$> mousePos)
 
 
 

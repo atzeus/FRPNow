@@ -45,10 +45,10 @@ repeatEv b = S $ loop where
 merge :: Stream a -> Stream a -> Stream a
 merge l r = loop where
   loop = S $
-   do l' <- getEs l
-      r' <- getEs r
+   do l' <- nextSim l
+      r' <- nextSim r
       e <- fmap nxt <$> race l' r'
-      let again = getEs loop
+      let again = nextSim loop
       pure e `switch` fmap (const again) e
   nxt (Tie  l r) = l ++ r
   nxt (L    l  ) = l
@@ -58,7 +58,7 @@ merge l r = loop where
 
 fmapB :: Behavior (a -> b) -> Stream a -> Stream b
 fmapB f es = S $ loop where
- loop =  do e  <- getEs es
+ loop =  do e  <- nextSim es
             plan (nxt <$> e)
  nxt l = (<$> l) <$> f
 
@@ -66,7 +66,7 @@ fmapB f es = S $ loop where
 nextJusts :: Stream (Maybe a) -> Behavior (Event [a])
 nextJusts es = loop where
   loop =
-    do e <- getEs es
+    do e <- nextSim es
        join <$> plan (fmap nxt e)
   nxt l = case catMaybes l of
               [] -> loop
@@ -98,7 +98,7 @@ e `during` b = filterB (const <$> b) e
 
 sampleOn :: Behavior a -> Stream x -> Stream a
 sampleOn b s = S loop where
- loop = do e  <- getEs s
+ loop = do e  <- nextSim s
            let singleton x = [x]
            plan ((singleton <$> b) <$ e)
 
@@ -106,7 +106,7 @@ sampleOn b s = S loop where
 scanlEv :: (a -> b -> a) -> a -> Stream b -> Behavior (Stream a)
 scanlEv f i es = S <$> loop i where
  loop i =
-  do e  <- getEs es
+  do e  <- nextSim es
      let e' = (\(h : t) -> tail $ scanl f i (h : t)) <$> e
      ev <- plan (loop . last <$> e')
      return (pure e' `switch` ev)
@@ -114,7 +114,7 @@ scanlEv f i es = S <$> loop i where
 foldr1Ev :: (a -> Event b -> b) -> Stream a -> Behavior (Event b)
 foldr1Ev f es = loop where
  loop =
-  do e  <- getEs es
+  do e  <- nextSim es
      plan (nxt <$> e)
  nxt [h]     = f h          <$> loop
  nxt (h : t) = f h . return <$> nxt t
@@ -141,21 +141,21 @@ repeatIOList m = S <$> loop where
              return (pure h `switch` t)
 
 catMaybesStream :: Stream (Maybe a) -> Stream a
-catMaybesStream (S s) = S $ loop where
-  loop = do  e <- s
+catMaybesStream s = S $ loop where
+  loop = do  e <- nextSim s
              join <$> plan (nxt <$> e)
   nxt l = case  catMaybes l of
              [] -> loop
              l  -> return (return l)
 
 snapshots :: B a -> Stream () -> Stream a
-snapshots b (S s) = S $
-  do  e       <- s
+snapshots b s = S $
+  do  e       <- nextSim s
       ((\x -> [x]) <$>) <$> snapshot b (head <$> e)
 
 fold :: (a -> b -> a) -> a -> Stream b -> Behavior (Behavior a)
 fold f i s = loop i where
-  loop i = do e  <- getEs s
+  loop i = do e  <- nextSim s
               let e' = foldl f i <$> e
               ev <- plan (loop <$> e')
               return (i `step` ev)
@@ -170,8 +170,8 @@ fromChanges :: Eq a => Behavior a -> Stream a
 fromChanges = repeatEv . changeVal
 
 toChanges :: a -> Stream a -> Now (Behavior a)
-toChanges i (S x) = loop i where
-  loop i = do e  <- sample x
+toChanges i s = loop i where
+  loop i = do e  <- sample (nextSim s)
               e' <- plan (loop . last <$> e)
               return (i `step` e')
 
@@ -181,14 +181,14 @@ toChanges i (S x) = loop i where
 -- useful for interfacing with callback-based
 -- systems
 callbackStream :: Now (Stream a, a -> IO ())
-callbackStream = do mv <- unsafeSyncIO $ newMVar ([], Nothing)
+callbackStream = do mv <- syncIO $ newMVar ([], Nothing)
                     (_,s) <- loop mv
                     return (S s, func mv) where
   loop mv =
          do -- unsafeSyncIO $ traceIO "take2"
-            (l, Nothing) <- unsafeSyncIO $ takeMVar mv
+            (l, Nothing) <- syncIO $ takeMVar mv
             (e,cb) <- callbackE
-            unsafeSyncIO $ putMVar mv ([], Just cb)
+            syncIO $ putMVar mv ([], Just cb)
             -- unsafeSyncIO $ traceIO "rel2"
             es <- planNow $ loop mv <$ e
             let h = fst <$> es
@@ -220,7 +220,7 @@ callIOStream :: (a -> IO ()) -> Stream a -> Now ()
 callIOStream f = callStream (\x -> async (mapM_ f x))
 
 callSyncIOStream :: (a -> IO ()) -> Stream a -> Now ()
-callSyncIOStream f = callStream (\x -> unsafeSyncIO (mapM_ f x) >> return (pure ()))
+callSyncIOStream f = callStream (\x -> syncIO (mapM_ f x) >> return (pure ()))
 
 printAll :: (Show a, Eq a) => Stream a -> Now ()
 printAll = callSyncIOStream (\x -> traceIO (show x))

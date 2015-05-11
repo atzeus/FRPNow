@@ -1,10 +1,10 @@
 {-# LANGUAGE TypeOperators, ViewPatterns, RecursiveDo, ScopedTypeVariables #-}
 
 
-import qualified Graphics.UI.SDL as SDL
 import Control.Monad.Fix
 import Control.Applicative hiding (empty)
 import Control.Monad hiding (when)
+import Examples.SimpleGraphics
 import FRPNow
 import Examples.WXFRP
 import qualified Graphics.UI.WX as WX
@@ -21,17 +21,12 @@ import Prelude hiding (until)
 -}
 
 
-main = runNow $
-            mdo
-                 (cb, evs, _ ,evq) <- createFrame 800 600
-                 mousePos <- sample $ toMousePos evs
-                 buttons  <- sample $ toMouseButtonsDown evs
+main = WX.start $ runNowSlave $
+            mdo  mousePos <- toChanges (0,0) moveEvs
+                 buttons   <- sample $ fold updateSet empty btnEvs
                  bxs <- sample (boxes mousePos buttons)
-                 callSyncIOStream cb (fromChanges bxs)
-                 quit <- sample (next evq)
-                 --printAll evs
-                 --drawAll screen bxs
-                 return never
+		 (moveEvs, btnEvs) <- boxWindow "Hullo" 800 600 bxs
+                 return ()
 
 
 
@@ -43,7 +38,7 @@ boxes mousePos buttons = parList ( box `sampleOn` clicks MLeft )
   box = open $
      do p1 <- cur mousePos
         let defineRect = rect p1 <$> mousePos
-        let defineBox = Box <$> defineRect <*> pure red
+        let defineBox = Box <$> pure red <*> defineRect
         defineBox `until` release MLeft
         r  <- cur $ defineRect
         r  <- cur $ movableRect r
@@ -51,7 +46,7 @@ boxes mousePos buttons = parList ( box `sampleOn` clicks MLeft )
         let toColor True  = green
             toColor False = red
         let color = toColor <$> mo
-        (Box  <$> r <*> color)  `until`  clickOn r MRight
+        (Box  <$> color <*> r)  `until`  clickOn r MRight
 
 
   movableRect :: Rect -> Behavior (Behavior Rect)

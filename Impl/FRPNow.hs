@@ -1,5 +1,5 @@
 {-# LANGUAGE  RecursiveDo, Rank2Types,OverlappingInstances, DeriveFunctor,TupleSections,TypeOperators,MultiParamTypeClasses, FlexibleInstances,TypeSynonymInstances, LambdaCase, ExistentialQuantification, GeneralizedNewtypeDeriving #-}
-module Impl.FRPNow(Behavior, Event, Now, never, whenJust, switch, sample, async, runNow, unsafeLazy, callbackE ,unsafeSyncIO) where
+module Impl.FRPNow(Behavior, Event, Now, never, whenJust, switch, sample, async, runNow, unsafeLazy, callbackE ,syncIO, runNowSlave) where
 
 import Control.Monad.Writer hiding (mapM_)
 import Control.Monad.Writer.Class
@@ -16,6 +16,7 @@ import System.IO.Unsafe -- only for unsafeMemoAgain at the bottom
 import Debug.Trace
 import Prelude hiding (mapM_)
 import Data.Either
+import Control.Concurrent
 
 import Swap
 import Impl.Ref
@@ -101,6 +102,7 @@ instance Monad Behavior where
        return (fh, switchEv th ((b >>= f) <$ t))
 
 
+
 switch :: Behavior a -> Event (Behavior a) -> Behavior a
 switch b Never   = b
 switch _ (Occ b) = b
@@ -164,6 +166,18 @@ instance Applicative Behavior where
 
 
 -- Memo stuff:
+{-
+again :: (x -> M x) -> M x -> M x
+again f m = unsafePerformIO $
+             runMemo f <$> newIORef m
+
+runMemo ::  (x -> M x) -> IORef (M x) -> M x
+runMemo f mem = 
+   do m <- liftIO $ readIORef mem
+      v <- m
+      liftIO $ putIORef (f v)
+      return v
+-}
 
 unsafeMemoAgain :: (x -> M  x) -> M x -> M x
 unsafeMemoAgain again m = unsafePerformIO $ runMemo <$> newIORef (Nothing, m) where
@@ -279,6 +293,20 @@ runNow m = newClock >>= runReaderT start where
   endRound = ask >>= liftIO . waitEndRound
 
 
+runNowSlave :: Now () -> IO ()
+runNowSlave m = newClock >>= runReaderT start where
+  start = do  (_,pl) <- runLazies (toN m)
+              c <- ask
+              liftIO $ loop c pl
+              return ()
+  loop ::  Clock -> Plans -> IO ()
+  loop c pli =
+   do forkIO $ do waitEndRound c
+                  (_, pl') <- runReaderT (runLazies (tryPlans pli)) c
+                  loop c pl'
+      return ()
+
+
 -- Plan stuff
 
 planM = makePlanRef makeWeakIORef
@@ -313,7 +341,7 @@ tryAgain r =
 
 -- Start IO Stuff
 
-newtype Now a = Now {toN :: N a} deriving (Functor,Applicative,Monad)
+newtype Now a = Now {toN :: N a} deriving (Functor,Applicative,Monad, MonadFix)
 
 sample :: Behavior a -> Now a
 sample b = Now $ curB b
@@ -346,5 +374,5 @@ unsafeLazy m = B $
 
 -- occasionally handy for debugging
 
-unsafeSyncIO :: IO a -> Now a
-unsafeSyncIO m = Now $ liftIO m
+syncIO :: IO a -> Now a
+syncIO m = Now $ liftIO m

@@ -54,7 +54,8 @@ curRound (Clock u _ c) = Round u <$> readMVar c
 
 waitEndRound :: Clock -> IO ()
 waitEndRound (Clock u f c) =
-   do waitForSignal f
+   do yield
+      waitForSignal f
       yield
       i <- takeMVar c
       putMVar c (i+1)

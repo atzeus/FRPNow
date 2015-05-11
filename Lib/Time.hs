@@ -29,7 +29,7 @@ waitSeconds d = traceIO "gonna wait" >> threadDelay (round (d * 1000000)) >> tra
 getClock :: Duration -> Now (Behavior Time)
 getClock minDelta = loop where
  loop =
-   do now <- unsafeSyncIO $ getElapsedTimeSeconds
+   do now <- syncIO $ getElapsedTimeSeconds
 
       e <- async (waitSeconds minDelta)
       e' <- plan (loop <$ e)

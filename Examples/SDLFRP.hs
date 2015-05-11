@@ -47,7 +47,7 @@ drawBoxes s l =
 
 
 toRect :: Rect -> SDL.Rect
-toRect (normalize -> Rect (lx,uy) (rx,dy)) = SDL.Rect (round lx) (round uy) (round (rx - lx)) (round (dy - uy))
+toRect (R (P lx uy) (P rx dy)) = SDL.Rect (round lx) (round uy) (round (rx - lx)) (round (dy - uy))
 
 getColor :: SDL.Surface -> Color -> IO SDL.Pixel
 getColor s c =
@@ -73,7 +73,7 @@ toM _             = Nothing
 toMousePos :: Stream SDL.Event -> Behavior (Behavior Point)
 toMousePos = fold getMousePos (0.0,0.0)
 
-getMousePos p (SDL.MouseMotion x y _ _) = (fromIntegral x, fromIntegral y)
+getMousePos p (SDL.MouseMotion x y _ _) = P (fromIntegral x) (fromIntegral y)
 getMousePos p _                         = p
 
 drawAll :: SDL.Surface -> Behavior [Box] -> Now ()
