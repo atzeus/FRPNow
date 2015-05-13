@@ -14,18 +14,18 @@ import Data.Set hiding (filter,fold, foldl,map)
 import qualified Data.Set as S
 import Prelude hiding (until)
 
-nrBoxes = 2
-timeDelay = 0.5 -- seconds
+nrBoxes = 5
+timeDelay = 0.2 -- seconds
 
 -- todo : interpolate boxes
 
-main = WX.start $ runNowSlave $
+main =runWx $
             mdo  mousePos <- toChanges (0,0) moveEvs
                  now <- syncIO getElapsedTimeSeconds
                  clock <- toChanges now ticks
                  buttons   <- sample $ fold updateSet empty btnEvs
                  bxs <- sample (timeflows nrBoxes timeDelay clock mousePos buttons)
-		 (moveEvs, btnEvs,ticks) <- boxWindowTimer "Hullo" 800 600 20 bxs
+		 (moveEvs, btnEvs,ticks) <- boxWindowTimer "Hullo" 800 600 40 bxs
                  return ()
 
 
@@ -54,7 +54,7 @@ timeflows n d clock mousePos buttons =
     fade i (Box c r) = Box  (mixi (i * fac) c white) r
 
   box :: Behavior Box
-  box = Box <$> (btnsToColor <$> buttons) <*> (rectAt (50,50) <$> mousePos)
+  box = Box <$> pure red <*> (rectAt (50,50) <$> mousePos)
 
 
 

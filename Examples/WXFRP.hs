@@ -27,6 +27,7 @@ boxWindows n name w h boxes =
 boxWindow :: String -> Double -> Double ->  Behavior [G.Box] -> Now (Stream G.Point, Stream G.BtnAction)
 boxWindow name w h boxes = (\(x,y,_) -> (x,y)) <$> boxWindowFrame name w h boxes
 
+
 boxWindowTimer :: String -> Double -> Double -> Double -> Behavior [G.Box] -> Now (Stream G.Point, Stream G.BtnAction, Stream Time)
 boxWindowTimer s w h fps boxes = 
     do (p,b,f) <- boxWindowFrame s w h boxes
@@ -37,11 +38,11 @@ boxWindowTimer s w h fps boxes =
 
 
 -- call start before this!
-boxWindowFrame :: String -> Double -> Double ->  Behavior [G.Box] -> Now (Stream G.Point, Stream G.BtnAction,Frame ())
-boxWindowFrame name w h boxes
-  = do (m, callMouse) <- callbackStream
-       f <- syncIO $ frameFixed [text := name]
+boxWindowFrame :: String -> Double -> Double ->  Behavior [G.Box] -> Now (Stream G.Point, Stream G.BtnAction, Frame ())
+boxWindowFrame name w h boxes  = 
+    do (m, callMouse) <- callbackStream
        r <- syncIO $ newIORef []
+       f <- frpFrame [text := name]
        -- create a panel to draw in.
        p <- syncIO $ panel f [on paint := paintBoxes r]
        callSyncIOStream (repaintBoxes p r) (fromChanges boxes)
@@ -52,7 +53,7 @@ boxWindowFrame name w h boxes
        syncIO $ set f [layout := minsize (sz (round  w) (round  h)) $ widget p]
        return (toMousePos m,toMouseBtn m,f)
    where
-    paintBoxes :: IORef [G.Box] -> DC a -> Rect -> IO ()
+    paintBoxes :: IORef [G.Box] -> DC a -> Rect -> IO () 
     paintBoxes r dc _ = 
         do  boxes <- readIORef r
             mapM_ (paintBox dc) boxes

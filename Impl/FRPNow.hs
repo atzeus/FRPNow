@@ -16,7 +16,6 @@ import System.IO.Unsafe -- only for unsafeMemoAgain at the bottom
 import Debug.Trace
 import Prelude hiding (mapM_)
 import Data.Either
-import Control.Concurrent
 
 import Swap
 import Impl.Ref

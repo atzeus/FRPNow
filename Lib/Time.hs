@@ -2,14 +2,13 @@
 
 module Lib.Time where
 
-import Impl.FRPNow
+import Impl.WXFRPNow
 import Lib.Lib
 import Lib.EventStream
 import Swap
 import Data.Sequence
 import Control.Applicative hiding (empty)
 import Data.Time.Clock.POSIX
-import Control.Concurrent
 import Data.Foldable
 import Debug.Trace
 
@@ -22,7 +21,7 @@ type History a = (a, Seq (Time,a))
 
 getElapsedTimeSeconds :: IO Time
 getElapsedTimeSeconds =  fromRational . toRational <$> getPOSIXTime
-
+{-
 waitSeconds :: Duration -> IO ()
 waitSeconds d = traceIO "gonna wait" >> threadDelay (round (d * 1000000)) >> traceIO "Bla"
 
@@ -34,7 +33,7 @@ getClock minDelta = loop where
       e <- async (waitSeconds minDelta)
       e' <- plan (loop <$ e)
       return (pure now `switch` e')
-
+-}
 
 localTime :: Behavior Time -> Behavior (Behavior Time)
 localTime t = do n <- t

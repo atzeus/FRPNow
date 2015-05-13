@@ -1,23 +1,22 @@
 
 
 module Lib.EventStream
-(Stream, next, nextSim, repeatEv, repeatIO, repeatIOList, merge, fmapB, filterJusts, filterEv, filterMapB, toChanges,
+(Stream, next, nextSim, repeatEv, merge, fmapB, filterJusts, filterEv, filterMapB, toChanges,
   filterB, during,sampleOn, scanlEv, filterStream, foldr1Ev, foldrEv, foldrSwitch, foldB, fold, parList, bufferStream, fromChanges,
- callbackStream, callStream, callIOStream, callSyncIOStream, printAll)
+ callbackStream, callStream, callSyncIOStream, printAll)
   where
 
 import Data.Maybe
 import Control.Monad hiding (when)
 import Control.Applicative hiding (empty)
-import Control.Concurrent
-
+import Data.IORef
 import Data.Sequence hiding (reverse,scanl,take)
 import Prelude hiding (until,length)
 import Debug.Trace
-import Control.Concurrent.MVar
+--import Control.Concurrent.MVar
 
 import Swap
-import Impl.FRPNow
+import Impl.WXFRPNow
 import Lib.Lib
 import Debug.Trace
 
@@ -127,7 +126,7 @@ foldrSwitch b = foldrEv b switch
 
 foldBs :: Behavior a -> (Behavior a -> b -> Behavior a) -> Stream b -> Behavior (Behavior a)
 foldBs b f es = scanlEv f b es >>= foldrSwitch b
-
+{-
 repeatIO :: IO a -> Now (Stream a)
 repeatIO m = S <$> loop where
   loop = do  h  <- async m
@@ -139,7 +138,7 @@ repeatIOList m = S <$> loop where
   loop = do  h  <- async m
              t  <- planNow (loop <$ h)
              return (pure h `switch` t)
-
+-}
 catMaybesStream :: Stream (Maybe a) -> Stream a
 catMaybesStream s = S $ loop where
   loop = do  e <- nextSim s
@@ -181,14 +180,14 @@ toChanges i s = loop i where
 -- useful for interfacing with callback-based
 -- systems
 callbackStream :: Now (Stream a, a -> IO ())
-callbackStream = do mv <- syncIO $ newMVar ([], Nothing)
+callbackStream = do mv <- syncIO $ newIORef ([], Nothing)
                     (_,s) <- loop mv
                     return (S s, func mv) where
   loop mv =
          do -- unsafeSyncIO $ traceIO "take2"
-            (l, Nothing) <- syncIO $ takeMVar mv
+            (l, Nothing) <- syncIO $ readIORef mv
             (e,cb) <- callbackE
-            syncIO $ putMVar mv ([], Just cb)
+            syncIO $ writeIORef mv ([], Just cb)
             -- unsafeSyncIO $ traceIO "rel2"
             es <- planNow $ loop mv <$ e
             let h = fst <$> es
@@ -197,13 +196,12 @@ callbackStream = do mv <- syncIO $ newMVar ([], Nothing)
 
   func mv x =
     do -- traceIO "take"
-       (l,mcb) <- takeMVar mv
-       putMVar mv (x:l, Nothing)
+       (l,mcb) <- readIORef mv
+       writeIORef mv (x:l, Nothing)
        -- traceIO "release!"
        case mcb of
          Just x -> x ()
          Nothing -> return ()
-       yield
 
 
 -- call the given function each time an event occurs
@@ -215,10 +213,10 @@ callStream f evs = do e2 <- sample (nextSim evs)
                e <- sample (nextSim evs)
                planNow (again <$> (e2 >> e))
                return ()
-
+{-
 callIOStream :: (a -> IO ()) -> Stream a -> Now ()
 callIOStream f = callStream (\x -> async (mapM_ f x))
-
+-}
 callSyncIOStream :: (a -> IO ()) -> Stream a -> Now ()
 callSyncIOStream f = callStream (\x -> syncIO (mapM_ f x) >> return (pure ()))
 
