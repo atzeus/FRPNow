@@ -14,18 +14,15 @@ import Data.Set hiding (filter,fold, foldl,map)
 import qualified Data.Set as S
 import Prelude hiding (until)
 
-nrBoxes = 5
-timeDelay = 1 -- seconds
+nrBoxes = 15
 
 -- todo : interpolate boxes
 
 main =runWx $
             mdo  mousePos <- toChanges (0,0) moveEvs
-                 now <- syncIO getElapsedTimeSeconds
-                 clock <- toChanges now ticks
                  buttons   <- sample $ fold updateSet empty btnEvs
-                 bxs <- sample (timeflows nrBoxes timeDelay clock mousePos buttons)
-		 (moveEvs, btnEvs,ticks) <- boxWindowTimer "Hullo" 800 600 40 bxs
+                 bxs <- sample (timeflows nrBoxes mousePos buttons)
+		 (moveEvs, btnEvs) <- boxWindow "Hullo" 800 600 bxs
                  return ()
 
 
@@ -37,25 +34,27 @@ iteratenM f a n
                    t <- iteratenM f h (n - 1)
                    return (h : t)
 
-
+delayDiscreteB :: Eq a => a -> Behavior a -> Behavior (Behavior a)
+delayDiscreteB i b = do s <- delayDiscreteN 3 (fromChanges b)
+                        asChanges i s
 
 mixi f l r = lerpColor l f r
 
-timeflows :: Integer -> Double -> Behavior Time -> Behavior Point -> Behavior (Set MouseBtn) -> Behavior (Behavior [Box])
-timeflows n d clock mousePos buttons =
+timeflows :: Integer ->  Behavior Point -> Behavior (Set MouseBtn) -> Behavior (Behavior [Box])
+timeflows n mousePos buttons = 
  do l <- iteratenM nextBox box n
     return $ reverse <$> fadeOut <$> foldl (\x y -> (:) <$> y <*> x) (pure []) (box : l)
 
   where
   nextBox :: Behavior Box -> Behavior (Behavior Box)
-  nextBox b = delayBy clock b d
+  nextBox b = delayDiscreteB (Box red (rectAt (25,25) (0,0))) b
 
   fadeOut l = zipWith fade [0..] l where
     fac = 1.0 / fromIntegral n
     fade i (Box c r) = Box  (mixi (i * fac) c white) r
 
   box :: Behavior Box
-  box = Box <$> pure red <*> (rectAt (50,50) <$> mousePos)
+  box = Box <$> pure red <*> (rectAt (25,25) <$> mousePos)
 
 
 

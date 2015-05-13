@@ -1,7 +1,6 @@
 
-
 module Lib.EventStream
-(Stream, next, nextSim, repeatEv, merge, fmapB, filterJusts, filterEv, filterMapB, toChanges,
+(Stream, next, nextSim, repeatEv, merge, fmapB, filterJusts, zipBS, filterEv, filterMapB, toChanges, delayDiscrete, delayDiscreteN, asChanges,
   filterB, during,sampleOn, scanlEv, filterStream, foldr1Ev, foldrEv, foldrSwitch, foldB, fold, parList, bufferStream, fromChanges,
  callbackStream, callStream, callSyncIOStream, printAll)
   where
@@ -10,8 +9,9 @@ import Data.Maybe
 import Control.Monad hiding (when)
 import Control.Applicative hiding (empty)
 import Data.IORef
-import Data.Sequence hiding (reverse,scanl,take)
+import Data.Sequence hiding (reverse,scanl,take,drop)
 import Prelude hiding (until,length)
+import qualified Prelude as P
 import Debug.Trace
 --import Control.Concurrent.MVar
 
@@ -31,7 +31,40 @@ next s = (head <$>) <$> (nextSim s)
 nextSim :: Stream a -> Behavior (Event [a])
 nextSim e = unsafeLazy $  getEs e
 
+dropStream :: Int -> Stream a -> Behavior (Stream a)
+dropStream n s =
+  do e <- nextSim s
+     e' <- join <$> plan (nxt n <$> e)
+     return (S $ pure e' `switch` (getEs s <$ e')) 
+ where
+   nxt n l = 
+     let m = P.length l 
+     in if m > n 
+        then pure (pure (drop n l))
+        else if n == 0
+             then nextSim s
+             else do e <- nextSim s
+                     join <$> plan (nxt (n - m) <$> e)
+                      
 
+delayDiscreteN :: Int -> Stream a -> Behavior (Stream a)
+delayDiscreteN n s = 
+  do x <- scanlEv (\l x -> take n (x:l)) [] s
+     x' <- dropStream n x
+     return (last <$> x')
+
+tailStream :: Stream a -> Behavior (Stream a)
+tailStream s = S <$> 
+     do e <- nextSim s
+        e' <- join <$> plan (nxt <$> e)
+        return (pure e' `switch` (getEs s <$ e')) where
+  nxt [h]   = nextSim s
+  nxt (h:t) = pure (pure t)
+              
+delayDiscrete :: Stream a -> Behavior (Stream a)
+delayDiscrete s = do x <- scanlEv (\(_,p) x -> (p,x)) (undefined,undefined) s
+                     x' <- tailStream x
+                     return (snd <$> x')
 
 
 repeatEv :: Behavior (Event a) -> Stream a
@@ -60,6 +93,12 @@ fmapB f es = S $ loop where
  loop =  do e  <- nextSim es
             plan (nxt <$> e)
  nxt l = (<$> l) <$> f
+
+zipBS :: Behavior a -> Stream b -> Stream (a,b)
+zipBS f es = S $ loop where
+ loop =  do e  <- next es
+            plan (nxt <$> e)
+ nxt l = (\x -> [(x,l)]) <$> f
 
 
 nextJusts :: Stream (Maybe a) -> Behavior (Event [a])
@@ -167,6 +206,12 @@ bufferStream i = scanlEv (\t h -> take i (h : t)) []
 
 fromChanges :: Eq a => Behavior a -> Stream a
 fromChanges = repeatEv . changeVal
+
+asChanges :: a -> Stream a -> Behavior (Behavior a)
+asChanges i s = loop i where
+  loop i = do e  <- nextSim s
+              e' <- plan (loop . last <$> e)
+              return (i `step` e')
 
 toChanges :: a -> Stream a -> Now (Behavior a)
 toChanges i s = loop i where

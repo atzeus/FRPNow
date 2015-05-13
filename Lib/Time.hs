@@ -6,7 +6,7 @@ import Impl.WXFRPNow
 import Lib.Lib
 import Lib.EventStream
 import Swap
-import Data.Sequence
+import Data.Sequence.BSeq
 import Control.Applicative hiding (empty)
 import Data.Time.Clock.POSIX
 import Data.Foldable
@@ -17,7 +17,7 @@ type Time = Double
 type Duration = Double
 
 type Sample a = (Time,a)
-type History a = (a, Seq (Time,a))
+type History a = (a, BSeq (Time,a))
 
 getElapsedTimeSeconds :: IO Time
 getElapsedTimeSeconds =  fromRational . toRational <$> getPOSIXTime
@@ -49,12 +49,12 @@ addSample :: History a -> Sample a -> History a
 addSample (i,ss) s = (i, ss |> s)
 
 
-afterTime :: Time -> History a  -> History a
-afterTime t (a,s) =
+fromTime :: Time -> History a  -> History a
+fromTime t (a,s) =
  case viewl s of
    EmptyL -> (a, empty)
    (ts,x) :< f -> if ts <= t
-                  then afterTime t (x,f)
+                  then fromTime t (x,f)
                   else (a,s)
 
 deltaTime :: Behavior Time -> Behavior (Event Time)
@@ -79,7 +79,7 @@ buffertime time d s = do evs <- scanlEv addDrop empty times
                          return (map snd . toList <$> evs)
   where times = fmapB ((,) <$> time) s
         addDrop l (t,s) = dropBefore (t - d) (l |> (t,s))
-        dropBefore :: Time -> Seq (Time,a) -> Seq (Time,a)
+        dropBefore :: Time -> BSeq (Time,a) -> BSeq (Time,a)
         dropBefore t l =
           case viewl l of
             EmptyL -> empty
@@ -89,14 +89,17 @@ buffertime time d s = do evs <- scanlEv addDrop empty times
 record2 :: Eq a => Behavior Time -> Behavior a -> Duration -> Behavior (Stream (History a))
 record2 time b d = b >>= histories
  where samples = ((,) <$> time) `fmapB` fromChanges b
-       addNext h (t,s) = afterTime (t - d) (addSample h (t,s))
+       addNext h (t,s) = fromTime (t - d) (addSample h (t,s))
        histories i = scanlEv addNext (i,empty) samples
+
+type Clock = Behavior Time
+
 
 
 record :: Behavior Time -> Behavior a -> Duration -> Behavior (Stream (History a))
 record time b d = b >>= histories
   where samples = ((\x y -> (y,x)) <$> b) `fmapB` (fromChanges time)
-        addNext h (t,s) = afterTime (t - d) (addSample h (t,s))
+        addNext h (t,s) = fromTime (t - d) (addSample h (t,s))
         histories i = scanlEv addNext (i,empty) samples
 
 delayBy :: Eq a=> Behavior Time -> Behavior a -> Duration -> Behavior (Behavior a)
