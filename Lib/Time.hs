@@ -41,7 +41,16 @@ fromTime t (a,s) =
                   then fromTime t (x,f)
                   else (a,s)
 
+dropWhileSeq :: Sequence s => (a -> Bool) -> s a -> s a
+dropWhileSeq f s = case viewl s of
+                     EmptyL -> empty
+                     h :< t | f h -> dropWhileSeq f t
+                            | otherwise -> s
 
+recordB :: Eq a => Clock -> Duration -> Behavior a -> Behavior (Behavior (BSeq (Time,a)))
+recordB c d b = foldB addDrop empty ((,) <$> c <*> b)
+  where  addDrop l (now,v) = let from = now - d
+                             in (dropWhileSeq (\(t,_) -> t < from) l) |> (now,v)
 
 trimTillTime :: Record a -> Time -> Record a
 trimTillTime x@(Record (ft,fv) r) time = case viewl r of
