@@ -19,8 +19,38 @@ type Duration = Double
 type Sample a = (Time,a)
 type History a = (a, BSeq (Time,a))
 
+type TimeSlice a = BSeq (Time,a)
+
+data Record a = Record { firstSample :: Sample a, rest :: BSeq (Sample a) } 
+
+recordToList :: Record a -> [a]
+recordToList (Record (_,x) t) = x : map snd (toList t)
+
 getElapsedTimeSeconds :: IO Time
 getElapsedTimeSeconds =  fromRational . toRational <$> getPOSIXTime
+
+addSample :: History a -> Sample a -> History a
+addSample (i,ss) s = (i, ss |> s)
+
+
+fromTime :: Time -> History a  -> History a
+fromTime t (a,s) =
+ case viewl s of
+   EmptyL -> (a, empty)
+   (ts,x) :< f -> if ts <= t
+                  then fromTime t (x,f)
+                  else (a,s)
+
+
+
+trimTillTime :: Record a -> Time -> Record a
+trimTillTime x@(Record (ft,fv) r) time = case viewl r of
+           EmptyL                        -> x
+           (st,sv) :< stail | ft < time || ft == st -> trimTillTime (Record (st,sv) stail) time
+                            | otherwise  -> x
+slice :: Clock -> a -> Stream a ->  Duration -> Behavior (Stream (Record a))
+slice clock i s d = scanlEv addDrop (Record (0,i) empty) $ ((,) <$> clock) `fmapB` s
+  where addDrop (Record i r) s@(t,_) = trimTillTime (Record i (r |> s)) (t -d)
 {-
 waitSeconds :: Duration -> IO ()
 waitSeconds d = traceIO "gonna wait" >> threadDelay (round (d * 1000000)) >> traceIO "Bla"
@@ -45,17 +75,6 @@ timeFrac t d = do t' <- localTime t
                   let frac = (\x -> min 1.0 (x / d)) <$> t'
                   return (frac `switch` (pure 1.0 <$ e))
 
-addSample :: History a -> Sample a -> History a
-addSample (i,ss) s = (i, ss |> s)
-
-
-fromTime :: Time -> History a  -> History a
-fromTime t (a,s) =
- case viewl s of
-   EmptyL -> (a, empty)
-   (ts,x) :< f -> if ts <= t
-                  then fromTime t (x,f)
-                  else (a,s)
 
 deltaTime :: Behavior Time -> Behavior (Event Time)
 deltaTime time = do now <- time
@@ -74,17 +93,9 @@ integral time b =
                        e <- plan (loop cur t' <$> dt)
                        return (pure t' `switch` e)
 
-buffertime :: Behavior Time -> Duration -> Stream a -> Behavior (Stream [a])
-buffertime time d s = do evs <- scanlEv addDrop empty times
-                         return (map snd . toList <$> evs)
-  where times = fmapB ((,) <$> time) s
-        addDrop l (t,s) = dropBefore (t - d) (l |> (t,s))
-        dropBefore :: Time -> BSeq (Time,a) -> BSeq (Time,a)
-        dropBefore t l =
-          case viewl l of
-            EmptyL -> empty
-            (ts,a) :< tl | ts < t    -> dropBefore t tl
-                         | otherwise -> l
+
+        
+
 
 record2 :: Eq a => Behavior Time -> Behavior a -> Duration -> Behavior (Stream (History a))
 record2 time b d = b >>= histories
@@ -95,6 +106,7 @@ record2 time b d = b >>= histories
 type Clock = Behavior Time
 
 
+          
 
 record :: Behavior Time -> Behavior a -> Duration -> Behavior (Stream (History a))
 record time b d = b >>= histories

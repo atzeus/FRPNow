@@ -62,11 +62,17 @@ instance Monad Event where
   return = Occ
   Never    >>= f = Never
   (Occ x)  >>= f = f x
-  ev    >>= f = memoE $
-    runE ev >>= \case
+  (E em)   >>= f = memoE $
+    em >>= \case
       Never ->  return Never
       Occ x ->  runE (f x)
-      e'    ->  return (ev >>= f)
+      E em'  ->  return (E $ bindE em' f)
+
+bindE :: M (Event a) -> (a -> Event b) -> M (Event b)
+bindE em f = em >>= \case
+    Never -> return Never
+    Occ x -> runE (f x)
+    E em' -> return $ E $ bindE em' f
 
 rerunE = runE
 
@@ -95,32 +101,51 @@ curB b = fst <$> runB b
 instance Monad Behavior where
   return = Const
   (Const x) >>= f = f x
-  b     >>= f = memoB $
-    do (h,t) <- runB b
-       (fh,th) <- runB (f h)
-       return (fh, switchEv th ((b >>= f) <$ t))
+  (B bm)    >>= f = memoB $
+    do (h,t) <- bm
+       case f h of
+         Const fv -> return (fv, (`bindB` f) <$> t)
+         B fm     -> 
+              do (fh,th) <- fm
+                 return (fh, switchEv th ( (`bindB` f) <$> t) )
 
-
+bindB (Const x) f = f x
+bindB (B bm)    f = B $ 
+    do (h,t) <- bm
+       case f h of
+         Const fv -> return (fv, (`bindB` f) <$> t)
+         B fm     -> 
+              do (fh,th) <- fm
+                 return (fh, switchEv th ((`bindB` f) <$> t))
 
 switch :: Behavior a -> Event (Behavior a) -> Behavior a
 switch b Never   = b
 switch _ (Occ b) = b
-switch b e   = memoB $ runE e >>= \case
+switch b e@(E em)   = memoB $ em >>= \case
    Occ   x -> runB x
    Never   -> runB b
    _       -> do (h,t) <- runB b
+                 return (h, switchEv t e)
+
+switch' :: Behavior a -> Event (Behavior a) -> Behavior a
+switch' b Never   = b
+switch' _ (Occ b) = b
+switch' b e@(E em)   = B $ em >>= \case
+   Occ   x -> runB x
+   Never   -> runB b
+   E em'   -> do (h,t) <- runB b
                  return (h, switchEv t e)
 
 switchEv :: Event (Behavior a) -> Event (Behavior a) -> Event (Behavior a)
 switchEv l Never     = l
 switchEv l (Occ r)   = Occ r
 switchEv Never r     = r
-switchEv (Occ x) r   = Occ (x `switch` r)
+switchEv (Occ x) r   = Occ (x `switch'` r)
 switchEv (E l) (E r) = E $
   r >>= \case
     Occ y -> return $ Occ y
     r' -> l >>= return . \case
-           Occ x -> Occ (x `switch` r')
+           Occ x -> Occ (x `switch'` r')
            l'    -> switchEv l' r'
 
 
@@ -128,12 +153,23 @@ switchEv (E l) (E r) = E $
 whenJust :: Behavior (Maybe a) -> Behavior (Event a)
 whenJust (Const Nothing)  = pure never
 whenJust (Const (Just x)) = pure (pure x)
-whenJust b = memoB $
-  do (h, t) <- runB b
+whenJust (B bm) = memoB $
+  do (h, t) <- bm
      case h of
-      Just x -> return (return x, whenJust b <$ t)
-      Nothing -> do en <- planM (runB (whenJust b) <$ t)
+      Just x -> return (return x, whenJust' <$> t)
+      Nothing -> do en <- planM (runB . whenJust' <$> t)
                     return (en >>= fst, en >>= snd)
+
+whenJust' :: Behavior (Maybe a) -> Behavior (Event a)
+whenJust' (Const Nothing)  = pure never
+whenJust' (Const (Just x)) = pure (pure x)
+whenJust' (B bm) = B $
+  do (h, t) <- bm
+     case h of
+      Just x -> return (return x, whenJust' <$> t)
+      Nothing -> do en <- planM (runB . whenJust' <$> t)
+                    return (en >>= fst, en >>= snd)
+
 
 rerunB :: (a, Event (Behavior a)) -> M (a, Event (Behavior a))
 rerunB (h,t) = runE t >>= \case
@@ -161,7 +197,6 @@ instance Functor Behavior where
 instance Applicative Behavior where
   pure = return
   (<*>) = ap
-
 
 
 -- Memo stuff:
@@ -200,28 +235,27 @@ unsafeMemoAgain again m = unsafePerformIO $ runMemo <$> newIORef (Nothing, m) wh
 
 getRound :: N Round
 getRound = M $ \(c,_) -> (,empty,empty) <$> curRound c
-
+{-# INLINE getRound #-}
 getClock :: N Clock
 getClock = M $ \(c,_) -> return (c,empty,empty)
-
+{-# INLINE getClock #-}
 getIdleCallback = M $ \(_,cb) -> return (cb,empty,empty)
-
-
+{-# INLINE getIdleCallback #-}
 addPlan :: Plan -> N ()
 addPlan p = M $ \_  -> return ((),empty, singleton p)
-
+{-# INLINE addPlan #-}
 
 addLazy :: Lazy -> N ()
 addLazy p = M $ \_  -> return ((), singleton p, empty)
-
+{-# INLINE addLazy #-}
 -- Start main loop
 
 type Plans = BSeq Plan
-type PlanState a = IORef (Either (Event (N a)) a)
-data Plan = forall a. Plan (Ref (PlanState a))
+type PlanState a = IORef (Either (N (Event (N a))) a)
+data Plan = forall a. Plan !(Ref (PlanState a))
 
 type Lazies = BSeq Lazy
-data Lazy = forall a. Lazy (N a) (IORef a)
+data Lazy = forall a. Lazy !(N a) !(IORef a)
 
 newtype M a = M { runM :: (Clock, IO Bool) -> IO (a, Lazies,Plans) } 
 
@@ -244,6 +278,7 @@ instance Applicative M where
 
 liftIO :: IO a -> M a
 liftIO m = M $ \_  -> do x <- m ; return (x, empty,empty)
+{-# INLINE liftIO #-}
 
 data SomePlanState = forall a. SomePlanState (PlanState a)
 
@@ -264,16 +299,17 @@ readLazyState n r =
   in x
 
 executeLazy :: Lazy -> N ()
-executeLazy (Lazy m r) = m >>= liftIO . writeIORef r
+executeLazy (Lazy m r) = do x <- m 
+                            liftIO (writeIORef r x)
 
 
 tryPlan :: Plan -> N  ()
 tryPlan p@(Plan r) = 
      liftIO (deRef r) >>= \x -> case x of
         Just x -> tryAgain x >>= \case
-             Occ  _  -> return ()
-             Never   -> return ()
              E _     -> addPlan p
+             _       -> return ()
+
         Nothing ->  return ()
 
 makeStrongRefs :: Plans -> N   [(Plan, SomePlanState)]
@@ -328,33 +364,52 @@ idleCallback c p =
 
 -- Plan stuff
 
-planM = makePlanRef makeWeakIORef
 
-
-
+{-
 makePlanRef :: (forall a. IORef a -> IO (Ref (IORef a))) -> Event (N a) -> N (Event a)
-makePlanRef makeRef e   = runE e >>= \case
+makePlanRef makeRef (E em)   = em >>= \case
   Never -> return Never
   Occ m -> return <$> m
-  e'    -> do r <- liftIO $ newIORef (Left e')
-              let res = E $ tryAgain r
-              ref <- liftIO $ makeRef r
-              addPlan (Plan ref)
-              return res
+  E em'    -> do r <- liftIO $ newIORef (Left em')
+		 let res = E $ tryAgain r
+		 ref <- liftIO $ makeRef r
+		 addPlan (Plan ref)
+		 return res
+-}
 
+planM ::  Event (N a) -> N (Event a)
+planM (E em)   = em >>= \case
+  Never -> return Never
+  Occ m -> return <$> m
+  E em'    -> do r <- liftIO $ newIORef (Left em')
+		 let res = E $ tryAgain r
+		 ref <- liftIO $ makeWeakIORef r
+		 addPlan (Plan ref)
+		 return res
+
+planN ::  Event (N a) -> N (Event a)
+planN (E em)   = em >>= \case
+  Never -> return Never
+  Occ m -> return <$> m
+  E em'    -> do r <- liftIO $ newIORef (Left em')
+		 let res = E $ tryAgain r
+		 ref <- liftIO $ makeStrongRef r
+		 addPlan (Plan ref)
+		 return res
 
 tryAgain :: PlanState a -> N (Event a)
 tryAgain r =
    let x = do liftIO (readIORef r) >>= \case
                Right x -> return (Occ x)
-               Left e -> runE e >>= \case
+               Left em -> em >>= \case
                  Never -> return Never
                  Occ m -> do res <- m
                              liftIO $ writeIORef r (Right res)
                              return (Occ res)
-                 e'    -> do liftIO $ writeIORef r (Left e)
-                             return (E x)
+                 E em'    -> do liftIO $ writeIORef r (Left em')
+                                return (E x)
   in x
+{-# INLINE tryAgain  #-}
 
 
 
@@ -383,8 +438,6 @@ fromPrimEv pe = fromMaybeM $ (pe `observeAt`) <$> getRound
 instance Swap Now Event where
  swap e = Now $ planN (toN <$> e)
 
-planN :: Event (N a) -> N (Event a)
-planN e = makePlanRef makeStrongRef e
 
 unsafeLazy :: Behavior (Event a) -> Behavior (Event a)
 unsafeLazy m = B $

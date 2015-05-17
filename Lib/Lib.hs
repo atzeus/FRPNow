@@ -24,6 +24,11 @@ plan = swap
 planNow :: Event (Now a) -> Now (Event a)
 planNow = plan
 
+prev :: Eq a => a -> Behavior a -> Behavior (Behavior a)
+prev i b = do v <- b
+              e <- change b
+              es <- plan (prev v b <$ e)
+              return (i `step` es)
 
 
 step :: a -> Event (Behavior a) -> Behavior a
@@ -102,8 +107,8 @@ type E = Event
 plan' :: E (B a) -> B (E a)
 plan' e = whenJust (pure Nothing `switch` ((Just <$>) <$> e))
 
-prev :: Eq a => a -> Behavior a -> Behavior (Behavior a)
-prev i b = (fst <$>) <$> foldB (\(_,p) c ->  (p,c)) (undefined,i) b
+prev' :: Eq a => a -> Behavior a -> Behavior (Behavior a)
+prev' i b = (fst <$>) <$> foldB (\(_,p) c ->  (p,c)) (undefined,i) b
 
 
 type B = Behavior

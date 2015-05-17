@@ -56,7 +56,7 @@ boxWindowFrame name w h boxes  =
     paintBoxes :: IORef [G.Box] -> DC a -> Rect -> IO () 
     paintBoxes r dc _ = 
         do  boxes <- readIORef r
-            mapM_ (paintBox dc) boxes
+            mapM_ (paintBox dc) (reverse boxes)
 
     paintBox :: DC a -> G.Box -> IO ()
     paintBox dc (G.Box c r) =

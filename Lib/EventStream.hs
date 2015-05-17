@@ -64,7 +64,7 @@ tailStream s = S <$>
 delayDiscrete :: Stream a -> Behavior (Stream a)
 delayDiscrete s = do x <- scanlEv (\(_,p) x -> (p,x)) (undefined,undefined) s
                      x' <- tailStream x
-                     return (snd <$> x')
+                     return (fst <$> x')
 
 
 repeatEv :: Behavior (Event a) -> Stream a

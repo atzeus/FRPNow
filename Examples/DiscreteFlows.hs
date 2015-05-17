@@ -14,14 +14,14 @@ import Data.Set hiding (filter,fold, foldl,map)
 import qualified Data.Set as S
 import Prelude hiding (until)
 
-nrBoxes = 15
+nrBoxes = 50
 
 -- todo : interpolate boxes
 
 main =runWx $
             mdo  mousePos <- toChanges (0,0) moveEvs
-                 buttons   <- sample $ fold updateSet empty btnEvs
-                 bxs <- sample (timeflows nrBoxes mousePos buttons)
+                 --buttons   <- sample $ fold updateSet empty btnEvs
+                 bxs <- sample (timeflows1 mousePos)
 		 (moveEvs, btnEvs) <- boxWindow "Hullo" 800 600 bxs
                  return ()
 
@@ -35,10 +35,27 @@ iteratenM f a n
                    return (h : t)
 
 delayDiscreteB :: Eq a => a -> Behavior a -> Behavior (Behavior a)
-delayDiscreteB i b = do s <- delayDiscreteN 3 (fromChanges b)
+delayDiscreteB i b = do s <- delayDiscrete  (fromChanges b)
                         asChanges i s
 
 mixi f l r = lerpColor l f r
+
+rectAt s p = Rect (p .- hs) (p .+ hs)
+        where hs = 0.5 .* s
+
+timeflows2 :: Behavior Point -> Behavior (Behavior [Box])
+timeflows2 b = do b' <- foldB (\l p -> take nrBoxes (p:l)) [] b
+                  return (map (\x -> Box red (rectAt (50,50) x)) <$> b')
+
+timeflows1 :: Behavior Point -> Behavior (Behavior [Box])
+timeflows1 b = do b' <- getEm b nrBoxes
+                  return (map (\x -> Box red (rectAt (50,50) x)) <$> b')
+  where getEm b n 
+          | n == 0 = return (pure [])
+          | otherwise = do b' <- prev (0,0) b
+                           t <- getEm b' (n-1)
+                           return $ (:) <$> b <*> t
+                  
 
 timeflows :: Integer ->  Behavior Point -> Behavior (Set MouseBtn) -> Behavior (Behavior [Box])
 timeflows n mousePos buttons = 
@@ -47,7 +64,7 @@ timeflows n mousePos buttons =
 
   where
   nextBox :: Behavior Box -> Behavior (Behavior Box)
-  nextBox b = delayDiscreteB (Box red (rectAt (25,25) (0,0))) b
+  nextBox b = prev (Box red (rectAt (25,25) (0,0))) b
 
   fadeOut l = zipWith fade [0..] l where
     fac = 1.0 / fromIntegral n
@@ -68,5 +85,4 @@ timeflows n mousePos buttons =
                   else S.foldl (mixi (1.0 / n )) grey (S.map btnToColor s)
 
       where n = fromIntegral $ S.size s
-  rectAt s p = Rect (p .- hs) (p .+ hs)
-        where hs = 0.5 .* s
+

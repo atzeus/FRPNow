@@ -2,6 +2,7 @@
 
 
 import Control.Monad.Fix
+import Data.Sequence.BSeq
 import Control.Applicative hiding (empty)
 import Control.Monad hiding (when)
 import FRPNow
@@ -10,25 +11,50 @@ import Examples.WXFRP
 import Examples.SimpleGraphics
 import Debug.Trace
 import Data.Maybe
-import Data.Set hiding (filter,fold, foldl,map)
+import Data.Set hiding (filter,fold, foldl,map,empty)
 import qualified Data.Set as S
 import Prelude hiding (until)
 
-nrBoxes = 5
+nrBoxes = 30
 timeDelay = 1 -- seconds
 
 -- todo : interpolate boxes
 
 main =runWx $
-            mdo  mousePos <- toChanges (0,0) moveEvs
+            mdo 
+                 
                  now <- syncIO getElapsedTimeSeconds
                  clock <- toChanges now ticks
-                 buttons   <- sample $ fold updateSet empty btnEvs
-                 bxs <- sample (timeflows nrBoxes timeDelay clock mousePos buttons)
-		 (moveEvs, btnEvs,ticks) <- boxWindowTimer "Hullo" 800 600 40 bxs
+                 --buttons   <- sample $ fold updateSet empty btnEvs
+                 mouseSlice <- sample $ slice clock (0,0) moveEvs (nrBoxes * timeDelay)
+                 let init = Record (0,(0,0)) empty
+                 points <- sample $ asChanges init mouseSlice
+		 (moveEvs, btnEvs,ticks) <- boxWindowTimer "Hullo" 800 600 60 (map toBox <$> (makeCenters <$> points <*> clock))
                  return ()
 
 
+toBox :: Point -> Box
+toBox p = Box red (rectAt (25,25) p)
+
+getHead :: Record Point -> Time -> Point
+getHead x@(Record (ta,a) r) ts =  case viewl r of
+       EmptyL -> a
+       (tb,b) :< _ -> if ts >= ta && tb > ta
+                      then  let f = (ts - ta) / (tb - ta)
+                            in  lerpPoint f a b 
+                      else b
+
+
+makeCenters ::  Record Point -> Time -> [Point]
+makeCenters r t = loop 0 (t - nrBoxes * timeDelay) r where
+--   loop :: Integer -> Time -> Record Point -> [Point]
+   loop i ts r
+       | i > nrBoxes = []
+       | otherwise = let r' = trimTillTime r ts
+                     in  getHead r' ts : loop (i + 1) (ts + timeDelay) r' 
+         
+
+mixi f l r = lerpColor l f r
 
 iteratenM :: Monad m => (a -> m a) -> a -> Integer -> m [a]
 iteratenM f a n
@@ -37,10 +63,9 @@ iteratenM f a n
                    t <- iteratenM f h (n - 1)
                    return (h : t)
 
-
-
-mixi f l r = lerpColor l f r
-
+rectAt s p = Rect (p .- hs) (p .+ hs)
+        where hs = 0.5 .* s
+{-
 timeflows :: Integer -> Double -> Behavior Time -> Behavior Point -> Behavior (Set MouseBtn) -> Behavior (Behavior [Box])
 timeflows n d clock mousePos buttons =
  do l <- iteratenM nextBox box n
@@ -55,7 +80,7 @@ timeflows n d clock mousePos buttons =
     fade i (Box c r) = Box  (mixi (i * fac) c white) r
 
   box :: Behavior Box
-  box = Box <$> pure red <*> (rectAt (50,50) <$> mousePos)
+  box = Box <$> pure red <*> (rectAt (25,25) <$> mousePos)
 
 
 
@@ -69,5 +94,4 @@ timeflows n d clock mousePos buttons =
                   else S.foldl (mixi (1.0 / n )) grey (S.map btnToColor s)
 
       where n = fromIntegral $ S.size s
-  rectAt s p = Rect (p .- hs) (p .+ hs)
-        where hs = 0.5 .* s
+-}
