@@ -24,10 +24,15 @@ plan = swap
 planNow :: Event (Now a) -> Now (Event a)
 planNow = plan
 
+-- specialize this..
+whenJustSample :: Behavior (Maybe (Behavior a)) -> Behavior (Event a)
+whenJustSample b = do x <- whenJust b 
+                      plan x
+
 prev :: Eq a => a -> Behavior a -> Behavior (Behavior a)
 prev i b = do v <- b
-              e <- change b
-              es <- plan (prev v b <$ e)
+              let mnext v' = if v == v' then Nothing else Just (prev v b)
+              e <- whenJust (mnext <$> b)
               return (i `step` es)
 
 
