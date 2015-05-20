@@ -14,14 +14,14 @@ import Data.Set hiding (filter,fold, foldl,map)
 import qualified Data.Set as S
 import Prelude hiding (until)
 
-nrBoxes = 50
+nrBoxes = 400
 
 -- todo : interpolate boxes
 
 main =runWx $
             mdo  mousePos <- toChanges (0,0) moveEvs
                  --buttons   <- sample $ fold updateSet empty btnEvs
-                 bxs <- sample (timeflows1 mousePos)
+                 bxs <- sample (timeflows2 mousePos)
 		 (moveEvs, btnEvs) <- boxWindow "Hullo" 800 600 bxs
                  return ()
 
@@ -33,10 +33,6 @@ iteratenM f a n
   | otherwise = do h <- f a
                    t <- iteratenM f h (n - 1)
                    return (h : t)
-
-delayDiscreteB :: Eq a => a -> Behavior a -> Behavior (Behavior a)
-delayDiscreteB i b = do s <- delayDiscrete  (fromChanges b)
-                        asChanges i s
 
 mixi f l r = lerpColor l f r
 

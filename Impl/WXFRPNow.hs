@@ -1,33 +1,35 @@
-{-# LANGUAGE  RecursiveDo, Rank2Types,OverlappingInstances, DeriveFunctor,TupleSections,TypeOperators,MultiParamTypeClasses, FlexibleInstances,TypeSynonymInstances, LambdaCase, ExistentialQuantification, GeneralizedNewtypeDeriving #-}
-module Impl.WXFRPNow(Behavior, Event, Now, never, whenJust, switch, sample, unsafeLazy, callbackE ,syncIO, runWx,frpFrame) where
+{-# LANGUAGE  RecursiveDo, Rank2Types,OverlappingInstances, DeriveFunctor,TupleSections,TypeOperators,MultiParamTypeClasses, FlexibleInstances,TypeSynonymInstances, LambdaCase, ExistentialQuantification, GeneralizedNewtypeDeriving, BangPatterns #-}
+module Impl.WXFRPNow(Behavior, Event, Now, never, whenJust, switch, sample, unsafeLazy, callbackE , whenJustSample ,syncIO, runWx,frpFrame) where
+
+
 
 import Control.Monad.Writer hiding (mapM_,liftIO)
 import Control.Monad.Writer.Class
 import Control.Monad.Reader.Class
 import Control.Monad.Reader hiding (mapM_,liftIO)
 import Control.Monad hiding (mapM_)
+import Control.Monad.IO.Class
 import Control.Applicative hiding (Const,empty)
 import Data.IORef
-import Data.Sequence.BSeq 
-import Data.Foldable
 import Data.Maybe
 import Graphics.UI.WX hiding (Event,empty)
 import System.IO.Unsafe -- only for unsafeMemoAgain at the bottom
 import Debug.Trace
-import Prelude hiding (mapM_)
+import Prelude
 import Data.Either
 
 import Swap
 import Impl.Ref
 import Impl.WxPrimEv
 
+
 -- comment/uncomment here to disable optimization
 again :: (x -> M  x) -> M x -> M x
 again = unsafeMemoAgain
 --again f m = m
 
-
-type N = M
+ 
+type N x = M x
 
 
 -- Start events, a bit more optimized than in paper
@@ -41,6 +43,7 @@ runE :: Event a -> M (Event a)
 runE (Occ a) = return (Occ a)
 runE Never   = return Never
 runE (E m)   = m
+{-# INLINE runE #-}
 
 curE ::  Event a -> M (Maybe a)
 curE e = runE e >>= return . \case
@@ -109,8 +112,8 @@ instance Monad Behavior where
               do (fh,th) <- fm
                  return (fh, switchEv th ( (`bindB` f) <$> t) )
 
-bindB (Const x) f = f x
-bindB (B bm)    f = B $ 
+bindB (Const x) (!f) = f x
+bindB (B bm)   (!f) = B $ 
     do (h,t) <- bm
        case f h of
          Const fv -> return (fv, (`bindB` f) <$> t)
@@ -181,6 +184,30 @@ memoB :: M (a, Event (Behavior a)) -> Behavior a
 memoB m = B (again rerunB m)
 
 
+-- specialize this..
+whenJustSample :: Behavior (Maybe (Behavior a)) -> Behavior (Event a)
+{-
+whenJustSample b = do x <- whenJust b 
+                      plan x
+-}
+whenJustSample (Const Nothing)  = pure never
+whenJustSample (Const (Just x)) = B $ do v <- curB x; return (pure v, never)
+whenJustSample (B bm) = memoB $
+  do (h, t) <- bm
+     case h of
+      Just x -> do v <- curB x; return (pure v, whenJustSample' <$> t)
+      Nothing -> do en <- planM (runB . whenJustSample' <$> t)
+                    return (en >>= fst, en >>= snd)
+
+whenJustSample' (Const Nothing)  = pure never
+whenJustSample' (Const (Just x)) = B $ do v <- curB x; return (pure v, never)
+whenJustSample' (B bm) = B $
+  do (h, t) <- bm
+     case h of
+      Just x -> do v <- curB x; return (pure v, whenJustSample' <$> t)
+      Nothing -> do en <- planM (runB . whenJustSample' <$> t)
+                    return (en >>= fst, en >>= snd)
+
 instance Swap Behavior Event  where
    swap Never = pure Never
    swap (Occ x) = Occ <$> x
@@ -234,111 +261,96 @@ unsafeMemoAgain again m = unsafePerformIO $ runMemo <$> newIORef (Nothing, m) wh
 -- unexported helper functions
 
 getRound :: N Round
-getRound = M $ \(c,_) -> (,empty,empty) <$> curRound c
+getRound = ReaderT $ \c -> curRound (mclock c)
 {-# INLINE getRound #-}
 getClock :: N Clock
-getClock = M $ \(c,_) -> return (c,empty,empty)
+getClock = ReaderT  $ \c -> return (mclock c)
 {-# INLINE getClock #-}
-getIdleCallback = M $ \(_,cb) -> return (cb,empty,empty)
+getIdleCallback = ReaderT $ \c -> return (mcallback c)
 {-# INLINE getIdleCallback #-}
 addPlan :: Plan -> N ()
-addPlan p = M $ \_  -> return ((),empty, singleton p)
+addPlan p = ReaderT  $ \s  -> modifyIORef (mplans s) (p :)
 {-# INLINE addPlan #-}
 
 addLazy :: Lazy -> N ()
-addLazy p = M $ \_  -> return ((), singleton p, empty)
+addLazy p = ReaderT $ \s  -> modifyIORef (mlazies s) (p :)
 {-# INLINE addLazy #-}
+
+takePlans :: N Plans
+takePlans = ReaderT $ \s  -> do x <- readIORef (mplans s) ; writeIORef (mplans s) []; return (reverse x)
+{-# INLINE takePlans #-}
+
+takeLazies :: N Lazies
+takeLazies = ReaderT $ \s  -> do x <- readIORef (mlazies s) ; writeIORef (mlazies s) []; return (reverse x)
+
 -- Start main loop
 
-type Plans = BSeq Plan
+type Plans = [Plan]
 type PlanState a = IORef (Either (N (Event (N a))) a)
 data Plan = forall a. Plan !(Ref (PlanState a))
 
-type Lazies = BSeq Lazy
-data Lazy = forall a. Lazy !(N a) !(IORef a)
+type Lazies = [Lazy]
+data Lazy = forall a. Lazy!(N a) {-# UNPACK #-} !(IORef a)
 
-newtype M a = M { runM :: (Clock, IO Bool) -> IO (a, Lazies,Plans) } 
+data MInfo = MInfo { mclock :: {-# UNPACK #-}  !Clock, mcallback :: IO Bool, mlazies ::  {-# UNPACK #-}  !(IORef Lazies), mplans :: {-# UNPACK #-}  !(IORef Plans) }
 
-instance Monad M where
-  return x = M $ \_ -> return (x, empty,empty)
-  m >>= f  = M $ \c -> 
-        do (x,lx,px) <- runM m c 
-           (y,ly,py) <- runM (f x) c 
-           return (y, lx >< ly, px >< py)
+type M a = ReaderT MInfo IO a  
 
-instance MonadFix M where
-  mfix f = M $ \c  -> mfix (\(~(a,_,_)) -> runM (f a) c)
-
-instance Functor M where
-  fmap f (M m) = M $ \c  -> fmap (\(a,l,p) -> (f a, l,p)) (m c)
- 
-instance Applicative M where
-  pure = return
-  (<*>) = ap
-
-liftIO :: IO a -> M a
-liftIO m = M $ \_  -> do x <- m ; return (x, empty,empty)
-{-# INLINE liftIO #-}
-
-data SomePlanState = forall a. SomePlanState (PlanState a)
-
+runM x = runReaderT x
 
 makeLazy :: N a -> N (Event a)
-makeLazy m = do  n <- getRound
-                 r <- liftIO (newIORef undefined)
-                 addLazy (Lazy m r)
-                 return (readLazyState n r)
+makeLazy m = ReaderT $ \c -> 
+       do n <- curRound (mclock c)
+          r <- newIORef undefined
+          modifyIORef (mlazies c) (Lazy m r :)
+          return (readLazyState n r)
 
 readLazyState :: Round -> IORef a -> Event a
 readLazyState n r =
-  let x = E $
-       do m <- getRound
+  let x = E $ ReaderT $ \c -> 
+       do m <- curRound (mclock c)
           if n == m
           then return x
-          else Occ <$> liftIO (readIORef r)
+          else Occ <$> readIORef r
   in x
 
-executeLazy :: Lazy -> N ()
-executeLazy (Lazy m r) = do x <- m 
-                            liftIO (writeIORef r x)
+
+elimLazies :: MInfo -> IO ()
+elimLazies c = loop
+  where 
+   loop = 
+     do  lz <- reverse <$> readIORef (mlazies c) 
+         writeIORef (mlazies c) []
+         case lz of
+          [] -> return ()
+          l  -> mapM_ (\(Lazy m r) -> runM m c >>= writeIORef r) l >> loop
 
 
-tryPlan :: Plan -> N  ()
-tryPlan p@(Plan r) = 
-     liftIO (deRef r) >>= \x -> case x of
-        Just x -> tryAgain x >>= \case
-             E _     -> addPlan p
+tryPlans :: MInfo -> IO ()
+tryPlans c =  
+  do --pl' <- makeStrongRefs pl
+     pl <- reverse <$> readIORef (mplans c) 
+     writeIORef (mplans c) []
+     -- liftIO $ putStrLn ("nrplans " ++ show (length pl))
+     mapM_ tryPlan pl where
+   tryPlan :: Plan -> IO  ()
+   tryPlan p@(Plan r) = 
+     deRef r >>= \x -> case x of
+        Just x -> runM (tryAgain x) c >>= \case
+             E _     -> modifyIORef (mplans c) (p :)
              _       -> return ()
 
         Nothing ->  return ()
 
-makeStrongRefs :: Plans -> N   [(Plan, SomePlanState)]
-makeStrongRefs pl = catMaybes <$> mapM makeStrongRef (toList pl) where
- makeStrongRef :: Plan -> N  (Maybe (Plan, SomePlanState))
- makeStrongRef (Plan r) = liftIO (deRef r) >>= return . \case
-         Just e  -> Just (Plan r, SomePlanState e)
-         Nothing -> Nothing
 
-tryPlans :: Plans -> N  ()
-tryPlans pl =
-  do --pl' <- makeStrongRefs pl
-     --liftIO $ putStrLn ("nrplans " ++ show (length (toList pl)))
-     mapM_ tryPlan pl
 
-runN :: (Clock, IO Bool) -> N a ->  IO (a,Plans)
-runN c m = runLazies (runM m) c
+runLazies ::  N a -> MInfo -> IO a
+runLazies m c = 
+             do  v <- runM m c
+                 elimLazies c
+                 return v
 
-runLazies ::  ((Clock, IO Bool) -> IO (a, Lazies,Plans)) -> (Clock, IO Bool) -> IO (a,Plans)
-runLazies m t = 
-              do  (val, lazies,pl) <- m t
-                  pr <- elimLazies lazies t
-                  return (val, pl >< pr)
 
-elimLazies :: Lazies -> (Clock, IO Bool) -> IO Plans
-elimLazies s c = case toList s of
-               [] -> return empty
-               s'-> do (_,ls,p) <- runM (mapM_ executeLazy s') c
-                       (p ><) <$> elimLazies ls c
 
 frpFrame :: [Prop (Frame ())] -> Now (Frame ())
 frpFrame p = Now $ do cb <- getIdleCallback
@@ -346,18 +358,18 @@ frpFrame p = Now $ do cb <- getIdleCallback
 
 runWx :: Now () -> IO ()
 runWx  m =  start $ 
-                do p <- newIORef empty
+                do p <- newIORef []
+                   l <- newIORef []
                    c <- newClock
-                   (_,pl) <- runLazies (runM (toN m))  (c,idleCallback c p) 
-                   writeIORef p pl
+                   let mi = (let x = MInfo c (idleCallback x) l p in x)
+                   runLazies (toN m) mi
 
-idleCallback :: Clock -> IORef Plans -> IO Bool
-idleCallback c p = 
-  roundEnd c >>= \x -> 
+idleCallback :: MInfo -> IO Bool
+idleCallback c = 
+  roundEnd (mclock c) >>= \x -> 
      if x 
-     then do pl <- readIORef p
-             (_, pl') <- runLazies (runM (tryPlans pl)) (c, idleCallback c p)
-             writeIORef p pl'
+     then do elimLazies c
+             tryPlans c
              return False
      else return False
 
@@ -399,17 +411,17 @@ planN (E em)   = em >>= \case
 
 tryAgain :: PlanState a -> N (Event a)
 tryAgain r =
-   let x = do liftIO (readIORef r) >>= \case
+   let x = ReaderT $ \c -> 
+           do readIORef r >>= \case
                Right x -> return (Occ x)
-               Left em -> em >>= \case
+               Left em -> runM em c >>= \case
                  Never -> return Never
-                 Occ m -> do res <- m
-                             liftIO $ writeIORef r (Right res)
+                 Occ m -> do res <- runM m c
+                             writeIORef r (Right res)
                              return (Occ res)
-                 E em'    -> do liftIO $ writeIORef r (Left em')
+                 E em'    -> do writeIORef r (Left em')
                                 return (E x)
   in x
-{-# INLINE tryAgain  #-}
 
 
 
