@@ -1,11 +1,11 @@
 module FRPNow(
-  module Impl.WXFRPNow,
+  module Impl.GTKFRPNow,
   module Lib.Lib,
   module Lib.EventStream,
   module Lib.Time,
   module Swap) where
 
-import Impl.WXFRPNow
+import Impl.GTKFRPNow
 import Lib.Lib
 import Lib.EventStream
 import Lib.Time

@@ -2,7 +2,7 @@
 module Lib.EventStream
 (Stream, next, nextSim, repeatEv, merge, fmapB, filterJusts, zipBS, filterEv, filterMapB, toChanges, delayDiscrete, delayDiscreteN, asChanges,
   filterB, during,sampleOn, scanlEv, filterStream, foldr1Ev, foldrEv, foldrSwitch, foldB, fold, parList, bufferStream, fromChanges,
- callbackStream, callStream, callSyncIOStream, printAll)
+ callbackStream, callStream, callSyncIOStream, untilStream, printAll,unsafeES)
   where
 
 import Data.Maybe
@@ -16,10 +16,10 @@ import Debug.Trace
 --import Control.Concurrent.MVar
 
 import Swap
-import Impl.WXFRPNow
+import Impl.GTKFRPNow
 import Lib.Lib
 import Debug.Trace
-
+unsafeES = getEs
 newtype Stream a = S { getEs :: Behavior (Event [a]) }
 
 instance Functor Stream where
@@ -77,10 +77,10 @@ repeatEv b = S $ loop where
 merge :: Stream a -> Stream a -> Stream a
 merge l r = loop where
   loop = S $
-   do l' <- nextSim l
-      r' <- nextSim r
+   do l' <- getEs l
+      r' <- getEs r
       e <- fmap nxt <$> race l' r'
-      let again = nextSim loop
+      let again = getEs loop
       pure e `switch` fmap (const again) e
   nxt (Tie  l r) = l ++ r
   nxt (L    l  ) = l
@@ -90,7 +90,7 @@ merge l r = loop where
 
 fmapB :: Behavior (a -> b) -> Stream a -> Stream b
 fmapB f es = S $ loop where
- loop =  do e  <- nextSim es
+ loop =  do e  <- getEs es
             plan (nxt <$> e)
  nxt l = (<$> l) <$> f
 
@@ -104,7 +104,7 @@ zipBS f es = S $ loop where
 nextJusts :: Stream (Maybe a) -> Behavior (Event [a])
 nextJusts es = loop where
   loop =
-    do e <- nextSim es
+    do e <- getEs es
        join <$> plan (fmap nxt e)
   nxt l = case catMaybes l of
               [] -> loop
@@ -136,7 +136,7 @@ e `during` b = filterB (const <$> b) e
 
 sampleOn :: Behavior a -> Stream x -> Stream a
 sampleOn b s = S loop where
- loop = do e  <- nextSim s
+ loop = do e  <- getEs s
            let singleton x = [x]
            plan ((singleton <$> b) <$ e)
 
@@ -180,7 +180,7 @@ repeatIOList m = S <$> loop where
 -}
 catMaybesStream :: Stream (Maybe a) -> Stream a
 catMaybesStream s = S $ loop where
-  loop = do  e <- nextSim s
+  loop = do  e <- getEs s
              join <$> plan (nxt <$> e)
   nxt l = case  catMaybes l of
              [] -> loop
@@ -188,7 +188,7 @@ catMaybesStream s = S $ loop where
 
 snapshots :: B a -> Stream () -> Stream a
 snapshots b s = S $
-  do  e       <- nextSim s
+  do  e       <- getEs s
       ((\x -> [x]) <$>) <$> snapshot b (head <$> e)
 
 fold :: (a -> b -> a) -> a -> Stream b -> Behavior (Behavior a)
@@ -231,7 +231,7 @@ callbackStream = do mv <- syncIO $ newIORef ([], Nothing)
   loop mv =
          do -- unsafeSyncIO $ traceIO "take2"
             (l, Nothing) <- syncIO $ readIORef mv
-            (e,cb) <- callbackE
+            (e,cb) <- callbackGTKE
             syncIO $ writeIORef mv ([], Just cb)
             -- unsafeSyncIO $ traceIO "rel2"
             es <- planNow $ loop mv <$ e
@@ -248,6 +248,15 @@ callbackStream = do mv <- syncIO $ newIORef ([], Nothing)
          Just x -> x ()
          Nothing -> return ()
 
+untilStream :: Stream a -> Event x -> Stream a
+untilStream s e = S $ beforeEv `switch` en
+  where en = pure never <$ e
+        beforeEv = do se <- getEs s
+                      ev <- first (Left <$> e) (Right <$> se)
+                      return (ev >>= choose)
+        choose (Left _)  = never
+        choose (Right x) = return x
+            
 
 -- call the given function each time an event occurs
 callStream :: ([a] -> Now (Event ())) -> Stream a -> Now ()

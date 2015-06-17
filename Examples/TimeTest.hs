@@ -9,7 +9,7 @@ import Control.Monad hiding (when)
 import System.Time
 import Lib.Time
 
-n = 11000
+n = 1100000
 main = runNow testcb
 
 test :: Now (Event ())

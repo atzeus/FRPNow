@@ -40,7 +40,7 @@ curRound (Clock u c _) = Round u <$> readIORef c
 
 roundEnd :: Clock -> IO Bool
 roundEnd (Clock u c f) = readIORef f >>= \x ->
-       if x 
+       if True || x 
        then do writeIORef f False
                modifyIORef c (+1)
                return True

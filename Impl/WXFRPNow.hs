@@ -8,7 +8,6 @@ import Control.Monad.Writer.Class
 import Control.Monad.Reader.Class
 import Control.Monad.Reader hiding (mapM_,liftIO)
 import Control.Monad hiding (mapM_)
-import Control.Monad.IO.Class
 import Control.Applicative hiding (Const,empty)
 import Data.IORef
 import Data.Maybe
@@ -246,8 +245,8 @@ unsafeMemoAgain again m = unsafePerformIO $ runMemo <$> newIORef (Nothing, m) wh
     -- use mdo notation such that we can obtain the result of this computation in the
     -- computation m...
     mdo r <- getRound
-        (v,m) <- liftIO $ readIORef mem
-        liftIO $ writeIORef mem (Just (r,res), again res)
+        (v,m) <- readIORef mem
+        writeIORef mem (Just (r,res), again res)
         res <- case v of
          Just (p,val) ->
            case compare p r of
@@ -261,27 +260,15 @@ unsafeMemoAgain again m = unsafePerformIO $ runMemo <$> newIORef (Nothing, m) wh
 -- unexported helper functions
 
 getRound :: N Round
-getRound = ReaderT $ \c -> curRound (mclock c)
+getRound = curRound globalClock
 {-# INLINE getRound #-}
-getClock :: N Clock
-getClock = ReaderT  $ \c -> return (mclock c)
-{-# INLINE getClock #-}
-getIdleCallback = ReaderT $ \c -> return (mcallback c)
-{-# INLINE getIdleCallback #-}
 addPlan :: Plan -> N ()
-addPlan p = ReaderT  $ \s  -> modifyIORef (mplans s) (p :)
+addPlan p = modifyIORef globalPlans (p :)
 {-# INLINE addPlan #-}
 
 addLazy :: Lazy -> N ()
-addLazy p = ReaderT $ \s  -> modifyIORef (mlazies s) (p :)
+addLazy p = modifyIORef globalLazies (p :)
 {-# INLINE addLazy #-}
-
-takePlans :: N Plans
-takePlans = ReaderT $ \s  -> do x <- readIORef (mplans s) ; writeIORef (mplans s) []; return (reverse x)
-{-# INLINE takePlans #-}
-
-takeLazies :: N Lazies
-takeLazies = ReaderT $ \s  -> do x <- readIORef (mlazies s) ; writeIORef (mlazies s) []; return (reverse x)
 
 -- Start main loop
 
@@ -292,84 +279,87 @@ data Plan = forall a. Plan !(Ref (PlanState a))
 type Lazies = [Lazy]
 data Lazy = forall a. Lazy!(N a) {-# UNPACK #-} !(IORef a)
 
-data MInfo = MInfo { mclock :: {-# UNPACK #-}  !Clock, mcallback :: IO Bool, mlazies ::  {-# UNPACK #-}  !(IORef Lazies), mplans :: {-# UNPACK #-}  !(IORef Plans) }
 
-type M a = ReaderT MInfo IO a  
-
-runM x = runReaderT x
+type M a = IO a  
 
 makeLazy :: N a -> N (Event a)
-makeLazy m = ReaderT $ \c -> 
-       do n <- curRound (mclock c)
+makeLazy m = 
+       do n <- getRound 
           r <- newIORef undefined
-          modifyIORef (mlazies c) (Lazy m r :)
+          modifyIORef globalLazies (Lazy m r :)
           return (readLazyState n r)
 
 readLazyState :: Round -> IORef a -> Event a
 readLazyState n r =
-  let x = E $ ReaderT $ \c -> 
-       do m <- curRound (mclock c)
+  let x = E $
+       do m <- getRound
           if n == m
           then return x
           else Occ <$> readIORef r
   in x
 
 
-elimLazies :: MInfo -> IO ()
-elimLazies c = loop
+elimLazies :: IO ()
+elimLazies = loop
   where 
    loop = 
-     do  lz <- reverse <$> readIORef (mlazies c) 
-         writeIORef (mlazies c) []
+     do  lz <- reverse <$> readIORef globalLazies 
+         writeIORef globalLazies []
          case lz of
           [] -> return ()
-          l  -> mapM_ (\(Lazy m r) -> runM m c >>= writeIORef r) l >> loop
+          l  -> mapM_ (\(Lazy m r) -> m >>= writeIORef r) l >> loop
 
 
-tryPlans :: MInfo -> IO ()
-tryPlans c =  
+tryPlans ::  IO ()
+tryPlans =  
   do --pl' <- makeStrongRefs pl
-     pl <- reverse <$> readIORef (mplans c) 
-     writeIORef (mplans c) []
+     pl <- reverse <$> readIORef globalPlans 
+     writeIORef globalPlans []
      -- liftIO $ putStrLn ("nrplans " ++ show (length pl))
      mapM_ tryPlan pl where
    tryPlan :: Plan -> IO  ()
    tryPlan p@(Plan r) = 
      deRef r >>= \x -> case x of
-        Just x -> runM (tryAgain x) c >>= \case
-             E _     -> modifyIORef (mplans c) (p :)
+        Just x -> tryAgain x >>= \case
+             E _     -> modifyIORef globalPlans (p :)
              _       -> return ()
 
         Nothing ->  return ()
 
 
 
-runLazies ::  N a -> MInfo -> IO a
-runLazies m c = 
-             do  v <- runM m c
-                 elimLazies c
+runLazies ::  N a -> IO a
+runLazies m  = 
+             do  v <- m
+                 elimLazies 
                  return v
 
 
 
 frpFrame :: [Prop (Frame ())] -> Now (Frame ())
-frpFrame p = Now $ do cb <- getIdleCallback
-                      liftIO $ frame ((on idle := cb): p)
+frpFrame p = Now $ frame ((on idle := idleCallback): p)
+
 
 runWx :: Now () -> IO ()
 runWx  m =  start $ 
-                do p <- newIORef []
-                   l <- newIORef []
-                   c <- newClock
-                   let mi = (let x = MInfo c (idleCallback x) l p in x)
-                   runLazies (toN m) mi
+                   runLazies (toN m) 
 
-idleCallback :: MInfo -> IO Bool
-idleCallback c = 
-  roundEnd (mclock c) >>= \x -> 
+-- Global info
+globalClock = unsafePerformIO newClock
+{-# NOINLINE globalClock #-}
+globalPlans =  unsafePerformIO $ newIORef []
+{-# NOINLINE globalPlans #-}
+globalLazies = unsafePerformIO $ newIORef []
+{-# NOINLINE globalLazies #-}
+
+
+
+idleCallback :: IO Bool
+idleCallback = 
+  roundEnd globalClock >>= \x -> 
      if x 
-     then do elimLazies c
-             tryPlans c
+     then do elimLazies 
+             tryPlans 
              return False
      else return False
 
@@ -393,9 +383,9 @@ planM ::  Event (N a) -> N (Event a)
 planM (E em)   = em >>= \case
   Never -> return Never
   Occ m -> return <$> m
-  E em'    -> do r <- liftIO $ newIORef (Left em')
+  E em'    -> do r <- newIORef (Left em')
 		 let res = E $ tryAgain r
-		 ref <- liftIO $ makeWeakIORef r
+		 ref <- makeWeakIORef r
 		 addPlan (Plan ref)
 		 return res
 
@@ -403,20 +393,19 @@ planN ::  Event (N a) -> N (Event a)
 planN (E em)   = em >>= \case
   Never -> return Never
   Occ m -> return <$> m
-  E em'    -> do r <- liftIO $ newIORef (Left em')
+  E em'    -> do r <-  newIORef (Left em')
 		 let res = E $ tryAgain r
-		 ref <- liftIO $ makeStrongRef r
+		 ref <- makeStrongRef r
 		 addPlan (Plan ref)
 		 return res
 
 tryAgain :: PlanState a -> N (Event a)
 tryAgain r =
-   let x = ReaderT $ \c -> 
-           do readIORef r >>= \case
+   let x = do readIORef r >>= \case
                Right x -> return (Occ x)
-               Left em -> runM em c >>= \case
+               Left em -> em >>= \case
                  Never -> return Never
-                 Occ m -> do res <- runM m c
+                 Occ m -> do res <- m 
                              writeIORef r (Right res)
                              return (Occ res)
                  E em'    -> do writeIORef r (Left em')
@@ -440,8 +429,8 @@ async m = Now $
 -}
 callbackE :: Now (Event a, a -> IO ())
 callbackE = Now $
-  do c <- getClock
-     (pe,cb) <- liftIO $ getCallback c
+  do 
+     (pe,cb) <- getCallback globalClock
      return (fromPrimEv pe, cb)
 
 fromPrimEv :: PrimEv a -> Event a
@@ -459,4 +448,4 @@ unsafeLazy m = B $
 -- occasionally handy for debugging
 
 syncIO :: IO a -> Now a
-syncIO m = Now $ liftIO m
+syncIO m = Now $ m

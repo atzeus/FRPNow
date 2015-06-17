@@ -21,7 +21,7 @@ nrBoxes = 400
 main =runWx $
             mdo  mousePos <- toChanges (0,0) moveEvs
                  --buttons   <- sample $ fold updateSet empty btnEvs
-                 bxs <- sample (timeflows2 mousePos)
+                 bxs <- sample (timeflows1 mousePos)
 		 (moveEvs, btnEvs) <- boxWindow "Hullo" 800 600 bxs
                  return ()
 

@@ -3,7 +3,7 @@
 module Lib.Lib where
 
 
-import Impl.WXFRPNow
+import Impl.GTKFRPNow
 import Swap
 import Control.Applicative
 import Control.Monad hiding (when)

@@ -3,8 +3,9 @@
 module Examples.WXFRP where
 
 import qualified Examples.SimpleGraphics as G
+
 import Graphics.UI.WX
-import FRPNow
+import FRPNow hiding (Event)
 import Data.IORef
 import Control.Applicative
 import Control.Concurrent
@@ -34,6 +35,25 @@ boxWindowTimer s w h fps boxes =
        (ti, callTime) <- callbackStream
        syncIO $ timer f [interval := round (1000.0 / fps), on command := getElapsedTimeSeconds >>= callTime]
        return (p,b,ti)
+
+setAttrSink :: (Visible w, Eq a) => Attr w a -> w -> Behavior a -> Now ()
+setAttrSink a w b = 
+     do i <- sample b
+        syncIO $ setEm i
+        callSyncIOStream setEm (fromChanges b)
+  where setEm i = set w [a := i] >> refresh w
+
+frpText :: Window w -> Behavior String ->  [Prop (StaticText ())] -> Now (StaticText ())
+frpText w b p = do s <- syncIO (staticText w p)
+                   setAttrSink text s b
+                   return s
+
+selectionSource ::  (Commanding w, Selection w) => w -> Now (Stream Int)
+selectionSource w = 
+  do (s,f) <- callbackStream
+     syncIO (set w [on command := getIt f])
+     return s
+  where getIt f = get w selection >>= f
 
 
 

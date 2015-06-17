@@ -2,7 +2,7 @@
 
 module Lib.Time where
 
-import Impl.WXFRPNow
+import Impl.GTKFRPNow
 import Lib.Lib
 import Lib.EventStream
 import Swap
