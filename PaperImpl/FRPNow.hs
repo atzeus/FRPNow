@@ -26,7 +26,7 @@ instance Monad E where
 m `bindLeakE` f = E $ 
     runE m >>= \r -> case r of
                       Right x  ->  runE (f x)
-                      Left e'  ->  return (Left (e' >>= f))
+                      Left e'  ->  return (Left (e' `bindLeakE` f))
 
 minTime :: E x -> E y -> E ()
 minTime l r  = E (merge <$> runE l <*> runE r) where

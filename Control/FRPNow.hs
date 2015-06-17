@@ -80,12 +80,17 @@ import Prelude hiding (mapM_)
 --   
 
 -- | An event is a value that is known from some point in time on. Denotationally a writer monad in time.
-data Event a  = E { runE :: M (Either (Event a) a) }
+data Event a  
+  = Never
+  | Occ a 
+  | E { runE :: M (Event a) }
 
 
 instance Monad Event where
-  return  x = E $ return (Right x)
-  m >>= f = memoE (m `bindLeakE` f) -- this in section 6.2
+  return = Occ
+  Never   >>= _ = Never
+  (Occ x) >>= f = f x
+  (E m)   >>= f = memoE (m `bindLeakE` f) 
 
 -- | A never occuring event
 
