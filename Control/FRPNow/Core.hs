@@ -1,7 +1,7 @@
-{-# LANGUAGE RecursiveDo, FlexibleContexts, ExistentialQuantification, Rank2Types,GeneralizedNewtypeDeriving  #-}
+{-# LANGUAGE LambdaCase,RecursiveDo, FlexibleContexts, ExistentialQuantification, Rank2Types,GeneralizedNewtypeDeriving  #-}
 -----------------------------------------------------------------------------
 -- |
--- Module      :  Control.FRPNow
+-- Module      :  Control.FRPNow.Core
 -- Copyright   :  (c) Atze van der Ploeg 2015
 -- License     :  BSD-style
 -- Maintainer  :  atzeus@gmail.org
@@ -14,17 +14,17 @@
 --  * The IO interface
 --  * The entry points, i.e. the functions that are used to start the FRP system.
 
-module Control.FRPNow(
+module Control.FRPNow.Core(
    -- * Pure interface
    -- $time
-   Event,Behavior, never, switch, whenJust,
+   Event,Behavior, never, switch, whenJust, futuristic,
   -- * IO interface
    Now, async, callback, sample, planNow,  sync,
   -- * Entry point
    runNowMaster,
    initNow) where
 import Control.Concurrent.Chan
-import Control.Applicative hiding (empty)
+import Control.Applicative hiding (empty,Const)
 import Control.Monad hiding (mapM_)
 import Control.Monad.IO.Class
 import Control.Monad.Reader  hiding (mapM_)
@@ -33,11 +33,11 @@ import Data.IORef
 import Control.Ref
 import Data.Sequence
 import System.IO.Unsafe
-import Data.Foldable
+import Data.Foldable hiding (null)
 import Debug.Trace
 import Control.PrimEv
 
-import Prelude hiding (mapM_)
+import Prelude hiding (mapM_,null)
 
 {--------------------------------------------------------------------
   Pure interface
@@ -60,7 +60,9 @@ import Prelude hiding (mapM_)
 -- instance Monad Behavior where
 --   return x = λt -> x
 --   m >>= f  = λt -> f (m t) t 
--- 
+--
+-- instance MonadFix Behavior where
+--   mfix f = λt -> let x = f x t in x 
 -- 
 -- switch :: Behavior a -> Event (Behavior a) -> Behavior a
 -- switch b (ts,s) = λn -> 
@@ -83,37 +85,40 @@ import Prelude hiding (mapM_)
 data Event a  
   = Never
   | Occ a 
-  | E { runE :: M (Event a) }
+  | E (M (Event a))
+
+runE :: Event a -> M (Event a)
+runE Never   = return Never
+runE (Occ x) = return (Occ x)
+runE (E m)   = m 
 
 
 instance Monad Event where
   return = Occ
-  Never   >>= _ = Never
-  (Occ x) >>= f = f x
-  (E m)   >>= f = memoE (m `bindLeakE` f) 
+  e  >>= f = memoE (e `bindE` f)
+
 
 -- | A never occuring event
 
-never = E $ return (Left never)
+never :: Event a
+never = Never
 
+bindE :: Event a -> (a -> Event b) -> Event b
+Never   `bindE` _ = Never
+(Occ x) `bindE` f = f x
+(E m)   `bindE` f = E $ bindEM m f
 
+joinE :: Event (Event a) -> Event a
+joinE m = m >>= id
 
-m `bindLeakE` f = E $ 
-    runE m >>= \r -> case r of
-                      Right x  ->  runE (f x)
-                      Left e'  ->  return (Left (e' >>= f))
-
-minTime :: Event x -> Event y -> Event ()
-minTime l r  = E (merge <$> runE l <*> runE r) where
-  merge (Right _)  _            = Right ()
-  merge _          (Right _  )  = Right ()
-  merge (Left l')  (Left r'  )  = Left (minTime l' r')
-
+bindEM :: M (Event a) -> (a -> Event b) -> M (Event b)
+m   `bindEM` f = 
+    m >>= \r -> case r of
+                      Never    -> return Never
+                      Occ x    -> runE (f x)
+                      E m'     -> return (E $ m' `bindEM` f)
 -- Section 6.2
 
-unrunE :: Either (Event a) a -> Event a 
-unrunE (Left e)    = e
-unrunE (Right a)   = pure a
 
 memoEIO :: Event a -> IO (Event a)
 memoEIO einit = 
@@ -124,57 +129,93 @@ usePrevE :: IORef (Event a) -> Event a
 usePrevE r = E $ 
   do e <- liftIO (readIORef r)
      res <- runE e
-     liftIO (writeIORef r (unrunE res))
+     liftIO (writeIORef r res)
      return res
 
 memoE :: Event a -> Event a
 --memoE e = e
+memoE Never = Never
+memoE (Occ x) = Occ x
 memoE e = unsafePerformIO $ memoEIO e
   
 -- Section 6.3
 
 -- | An behavior is a value that changes over time. Denotationally a reader monad in time.
 
-data Behavior a = B { runB :: M (a, Event (Behavior a)) }
+data Behavior a = B (M (a, Event (Behavior a)))
+                | Const a 
 
-switchLeak ::  Behavior a -> Event (Behavior a) -> Behavior a
-switchLeak b e     = B $
-    runE e >>= \r -> case r of
-        Right x   -> runB x
-        Left  e'  -> do  (h,t) <- runB b
-                         return (h, switchE t e')
+
+runB :: Behavior a -> M (a, Event (Behavior a))
+runB (B m) = m
+runB (Const a) = return (a, never)
+
+switch' ::  Behavior a -> Event (Behavior a) -> Behavior a
+switch' b Never = b
+switch' _ (Occ b) = b
+switch' b (E em) = B $
+    em >>= \r -> case r of
+        Never      -> runB b
+        Occ   b'   -> runB b'
+        e' -> do  (h,t) <- runB b
+                  return (h, switchE t e')
 
 switchE :: Event (Behavior a) -> Event (Behavior a) -> Event (Behavior a)
-switchE l r =  ((pure undefined `switchLeak` l) `switchLeak` r) <$ 
-               minTime l r
+switchE Never   r          = r
+switchE l       Never      = l
+switchE _       (Occ b)    = Occ b
+switchE (Occ b) r@(E _)    = Occ (b `switch'` r)
+-- next case, same as above, different strictness properties
+-- (do not run lm unless needed)
+switchE (E lm)  r@(E rm)   = E $
+  rm >>= \case 
+    Never -> lm
+    Occ b -> return (Occ b)
+    r'    -> lm >>= return . \case
+         Never -> r'
+         Occ b -> Occ (b `switch'` r)
+         l'    -> switchE l' r'
 
-joinBLeak :: Behavior (Behavior a) -> Behavior a
-joinBLeak m = B $ 
-    do  (h,t) <- runB m
-        runB $ h `switchLeak` (joinBLeak <$> t)
+bindB :: Behavior a -> (a -> Behavior b) -> Behavior b
+bindB (Const x) f = f x
+bindB (B m)     f = B $
+     do (h,t) <- m
+        case f h of
+          Const x -> return (x, (`bindB` f) <$> t)
+          B n     -> do (hn,tn) <- n
+                        return (hn, switchE tn ((`bindB` f) <$> t))
 
-fmapLeak f (B b) = B $ 
-       do (h,t) <- b
-          return (f h, fmap (fmap f) t)
 
-bindLeakB :: Behavior a -> (a -> Behavior b) -> Behavior b
-m `bindLeakB` f = joinBLeak (fmap f m)
-
-whenJustLeak :: Behavior (Maybe a) -> Behavior (Event a)
-whenJustLeak b = B $ 
-    do  (h, t) <- runB b
+whenJust' :: Behavior (Maybe a) -> Behavior (Event a)
+whenJust' (Const Nothing)  = pure never
+whenJust' (Const (Just x)) = pure (pure x)
+whenJust' (B m) = B $ 
+    do  (h, t) <- m
         case h of
-         Just x -> return (return x, whenJustLeak <$> t)
+         Just x -> return (return x, whenJust'  <$> t)
          Nothing -> 
-          do  en <- planM (runB . whenJustLeak <$> t)
+          do  en <- planM (runB . whenJust'  <$> t)
               return (en >>= fst, en >>= snd)
 
-instance Functor Behavior where
-  fmap f b = memoB (fmapLeak f b)
+
+whenJustSample' :: Behavior (Maybe (Behavior a)) -> Behavior (Event a)
+whenJustSample' (Const Nothing)  = pure never
+whenJustSample' (Const (Just x)) = B $ do v <- fst <$> runB x; return (pure v, never)
+whenJustSample' (B bm) = B $
+  do (h, t) <- bm
+     case h of
+      Just x -> do v <- fst <$> runB x; return (pure v, whenJustSample' <$> t)
+      Nothing -> do en <- planM (runB . whenJustSample' <$> t)
+                    return (en >>= fst, en >>= snd)
 
 instance Monad Behavior where
   return x = B $ return (x, never)
-  m >>= f = memoB (m `bindLeakB` f)
+  m >>= f = memoB (m `bindB` f)
+
+instance MonadFix Behavior where
+  mfix f = B $ mfix $ \(~(h,_)) ->
+       do  ~(h',t) <- runB (f h)
+           return (h, mfix f <$ t)
 
 -- | Introduce a change over time.
 --
@@ -185,7 +226,7 @@ instance Monad Behavior where
 -- Gives a behavior that acts as @b@ initially, and switches to the behavior inside @e@ as soon as @e@ occurs.
 --  
 switch :: Behavior a -> Event (Behavior a) -> Behavior a
-switch b e = memoB (switchLeak b e)
+switch b e = memoB (switch' b e)
 
 -- | Observe a change over time.
 -- 
@@ -207,17 +248,36 @@ switch b e = memoB (switchLeak b e)
 -- If @b@ never again is positive then the result is 'never'.
 
 whenJust :: Behavior (Maybe a) -> Behavior (Event a)
-whenJust b = memoB (whenJustLeak b)
+whenJust b = memoB (whenJust' b)
 
 
+-- | A more optimized version of:
+-- 
+-- > whenJustSample b = do x <- whenJust b 
+-- >                       plan x
 
--- Section 6.4
+whenJustSample :: Behavior (Maybe (Behavior a)) -> Behavior (Event a)
+whenJustSample b = memoB (whenJustSample' b)
+
+
+-- | Not typically needed, used for event streams.
+--  
+-- If we have a behavior giving events, such that each time the behavior is
+-- sampled the obtained event is in the future. Then this function
+-- ensures that we can use the event without inspecting it (i.e. before binding it).
+--
+-- If the implementation samples such an event and it turns 
+futuristic :: Behavior (Event a) -> Behavior (Event a)
+futuristic b =  B $ do e <- makeLazy (joinEm <$> runB b) 
+                       return (fst <$> e, snd <$> e)
+  where joinEm (e,es) = (,) <$> e <*> es
 
 unrunB :: (a,Event (Behavior a)) -> Behavior a 
+unrunB (h, Never) = Const h
 unrunB (h,t) = B $ 
   runE t >>= \x -> case x of
-        Right b -> runB b
-        Left t' -> return (h,t')
+        Occ b -> runB b
+        t' -> return (h,t')
 
 memoBIO :: Behavior a -> IO (Behavior a)
 memoBIO einit = 
@@ -233,14 +293,18 @@ usePrevB r = B $
      
 memoB :: Behavior a -> Behavior a
 --memoB b = b
+memoB b@(Const _) = b
 memoB b = unsafePerformIO $ memoBIO b
 
 -- Section 6.7
 
 
 data Env = Env {
-  plansRef :: IORef Plans,
-  clock    :: Clock }
+  plansRef  :: IORef Plans,
+  laziesRef :: IORef Lazies,
+  clock     :: Clock }
+
+
 
 type M = ReaderT Env IO
 
@@ -256,7 +320,7 @@ type M = ReaderT Env IO
 --    do x <- sample b; y <- sample b; return (x,y) 
 -- == do x <- sample b; return (x,x) 
 -- @
-newtype Now a = Now { getNow :: M a } deriving (Functor,Applicative,Monad)
+newtype Now a = Now { getNow :: M a } deriving (Functor,Applicative,Monad, MonadFix)
 
 
 -- | Sample the present value of a behavior
@@ -264,7 +328,9 @@ sample :: Behavior a -> Now a
 sample (B m) = Now $ fst <$> m
 
 
--- | Create an event that occurs when the callback is called.
+-- | Create an event that occurs when the callback is called. 
+-- 
+-- The callback can be safely called from any thread. An error occurs if the callback is called more than once. 
 -- 
 -- The event occurs strictly later than the time that 
 -- the callback was created, even if the callback is called immediately.
@@ -292,29 +358,55 @@ async m = Now $ do  c <- clock <$> ask
                     toE <$> liftIO (spawn c m)
 
 toE :: PrimEv a -> Event a
-toE p = E (toEither . (p `observeAt`) <$> getRound) 
-  where  toEither Nothing   = Left (toE p)
-         toEither (Just x)  = Right x
+toE p = E toEM where
+  toEM = (toEither . (p `observeAt`) <$> getRound) 
+  toEither Nothing   = E toEM
+  toEither (Just x)  = Occ x
+
 getRound :: M Round
 getRound = ReaderT $ \env -> curRound (clock env)  
 
 data Plan a = Plan (Event (M a)) (IORef (Maybe a))
 
 planToEv :: Plan a -> Event a
-planToEv (Plan ev ref) = E $
+planToEv (Plan ev ref) = E planToEvM where
+ planToEvM = 
   liftIO (readIORef ref) >>= \pstate -> 
   case pstate of
-   Just x   -> return (Right x)
+   Just x   -> return (Occ x)
    Nothing  -> runE ev >>= \estate ->
     case estate of
-     Left ev' -> 
-         return $ Left $ planToEv (Plan ev' ref)
-     Right m  -> do  v <- m
-                     liftIO $ writeIORef ref (Just v)
-                     return $ Right v
+     Occ m  -> do  v <- m
+                   liftIO $ writeIORef ref (Just v)
+                   return $ Occ v
+     ev' -> return $ E $ planToEvM
+
 
 data SomePlan = forall a. SomePlan (Ref (Plan a))
 type Plans = Seq SomePlan
+
+
+type Lazies = Seq Lazy
+data Lazy = forall a. Lazy (M (Event a)) (IORef (Event a))
+
+
+makeLazy :: M (Event a) -> M (Event a)
+makeLazy m =  ReaderT $ \env ->
+       do n <- curRound (clock env)   
+          r <- newIORef undefined
+          modifyIORef (laziesRef env) (Lazy m r <|)
+          return (readLazyState n r)
+
+readLazyState :: Round -> IORef (Event a) -> Event a
+readLazyState n r =
+  let x = E $
+       do m <- getRound
+          case compare n m of
+            LT -> liftIO (readIORef r) >>= runE
+            EQ -> return x
+            GT -> error "Round seems to decrease.."
+  in x
+
 
 planM :: Event (M a) -> M (Event a)
 planM e = plan makeWeakRef e
@@ -354,7 +446,8 @@ initNow :: (IO (Maybe a) -> IO ()) ->  Now (Event a) -> IO ()
 initNow schedule (Now m) = 
     mdo c <- newClock (schedule it)
         pr <- newIORef empty
-        let env = Env pr c
+        lr <- newIORef empty
+        let env = Env pr lr c
         let it = runReaderT (iteration e) env
         e <- runReaderT m env
         schedule (runReaderT (iterationMeat e) env)
@@ -370,8 +463,8 @@ iteration ev =
 iterationMeat ev = 
   do er <- runE ev
      case er of
-       Right x   -> return (Just x)
-       Left _    -> tryPlans >> return Nothing
+       Occ x     -> return (Just x)
+       _         -> tryPlans >> runLazies >> return Nothing
 
 
 newRoundM :: M Bool
@@ -389,9 +482,24 @@ tryPlans = ReaderT $ tryEm where
        case ps of
         Just p -> do  eres <- runE (planToEv p)
                       case eres of
-                       Right x -> return ()
-                       Left _  -> addPlan pr
+                       Occ x -> return ()
+                       _  -> addPlan pr
         Nothing -> return ()
+
+runLazies :: M ()
+runLazies = ReaderT $ runEm where
+  runEm env = 
+    readIORef (laziesRef env) >>= \pl ->
+       if null pl 
+       then return ()
+       else do writeIORef (laziesRef env) empty
+               runReaderT (mapM_ runLazy pl) env
+               runEm env where
+  runLazy (Lazy m r) = do e <- m
+                          x <- runE e
+                          case x of
+                            Occ _ -> error "Forced lazy was not lazy!"
+                            e'    -> liftIO $ writeIORef r e'
 
 
 
@@ -413,6 +521,11 @@ runNowMaster m =
          case mr of
            Just x  -> return x
            Nothing -> loop chan
+
+
+
+instance Functor Behavior where
+  fmap = liftM
 
 instance Applicative Behavior where
   pure = return

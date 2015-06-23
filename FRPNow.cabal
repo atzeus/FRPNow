@@ -1,0 +1,23 @@
+Name:                FRPNow
+Version:             1.2.3
+Synopsis:	     Principled practical FRP
+Description:         FRP with first-class behaviors and interalized IO, without space leaks
+License:             BSD3
+License-file:        LICENSE
+Author:              Atze van der Ploeg
+Maintainer:          atzeus@gmail.com
+Homepage:            https://github.com/atzeus/FRPNow
+Build-Type:          Simple
+Cabal-Version:       >=1.6
+Data-files:          ChangeLog
+Category:            Control
+Tested-With:         GHC==7.6.3
+Library
+  Build-Depends: base >= 2 && <= 6, mtl >= 1.0, containers, transformers
+  Exposed-modules: Control.FRPNow,Control.FRPNow.Core, Control.FRPNow.Lib, Control.FRPNow.EvStream
+  other-modules: Control.PrimEv, Control.Ref
+  Extensions:	 RankNTypes, GADTs, CPP, EmptyDataDecls
+
+source-repository head
+    type:     git
+    location: https://github.com/atzeus/FRPNow
