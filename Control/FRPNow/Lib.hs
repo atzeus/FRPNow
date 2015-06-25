@@ -17,7 +17,7 @@ module Control.FRPNow.Lib(
    change,
    becomesTrue,
    -- * Events and their ordering
-   occ,
+   tryGetEv,
    hasOccured,
    first,
    cmpTime,
@@ -100,8 +100,8 @@ sampleUntil b end  = loop [] where
 
 -- | Convert an event into a behavior that gives 
 -- @Nothing@ if the event has not occured yet, and @Just@ the value of the event if the event has already occured.
-occ :: Event a -> Behavior (Maybe a)
-occ e = pure Nothing `switch` ((pure . Just) <$> e)
+tryGetEv :: Event a -> Behavior (Maybe a)
+tryGetEv e = pure Nothing `switch` ((pure . Just) <$> e)
 
 -- | The resulting behavior states wheter the input event has already occured.
 hasOccured :: Event x -> Behavior Bool
@@ -112,7 +112,7 @@ hasOccured e = False `step` (pure True <$ e)
 -- If either of the events lies in the future, then the result will be the first of these events.
 -- If both events have already occured, the left event is returned.
 first :: Event a -> Event a -> Behavior (Event a)
-first l r = whenJust (occ r `switch` ((pure . Just) <$> l))
+first l r = whenJust (tryGetEv r `switch` ((pure . Just) <$> l))
 
 -- | Compare the time of two events.
 -- 
@@ -123,7 +123,7 @@ first l r = whenJust (occ r `switch` ((pure . Just) <$> l))
 -- If at the time of sampling both event lie in the past, then 
 -- the result is that they are simulatinous.
 cmpTime :: Event a -> Event b -> Behavior (Event (EvOrd a b))
-cmpTime l r = whenJust (outcome <$> occ l <*> occ r) where
+cmpTime l r = whenJust (outcome <$> tryGetEv l <*> tryGetEv r) where
   outcome Nothing  Nothing  = Nothing
   outcome (Just x) Nothing  = Just (LeftEarlier x)
   outcome Nothing  (Just y) = Just (RightEarlier y)

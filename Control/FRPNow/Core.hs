@@ -331,7 +331,9 @@ sample (B m) = Now $ fst <$> m
 -- | Create an event that occurs when the callback is called. 
 -- 
 -- The callback can be safely called from any thread. An error occurs if the callback is called more than once. 
--- 
+--
+-- See 'Control.FRPNow.EvStream.callbackStream' for a callback that can be called repeatidly.
+--  
 -- The event occurs strictly later than the time that 
 -- the callback was created, even if the callback is called immediately.
 callback ::  Now (Event a, a -> IO ())

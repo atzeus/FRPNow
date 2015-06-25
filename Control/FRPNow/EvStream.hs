@@ -22,7 +22,7 @@ module Control.FRPNow.EvStream(
   foldrSwitch,
   foldEs,
   -- * Filter and scan
-  catMaybesEs,filterEs,filterMapEs,scanlEv, filterB, during,
+  catMaybesEs,filterEs,filterMapEs,scanlEv, filterB, during, beforeEs,
   -- * Combine behavior and eventstream
   (<@@>) , snapshots,
   -- * IO interface
@@ -227,11 +227,9 @@ callbackStream = do mv <- sync $ newIORef ([], Nothing)
                     (_,s) <- loop mv
                     return (S s, func mv) where
   loop mv =
-         do -- unsafeSyncIO $ traceIO "take2"
-            (l, Nothing) <- sync $ readIORef mv
+         do (l, Nothing) <- sync $ readIORef mv
             (e,cb) <- callback
             sync $ writeIORef mv ([], Just cb)
-            -- unsafeSyncIO $ traceIO "rel2"
             es <- planNow $ loop mv <$ e
             let h = fst <$> es
             let t = snd <$> es

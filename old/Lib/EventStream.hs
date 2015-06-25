@@ -9,7 +9,7 @@ import Data.Maybe
 import Control.Monad hiding (when)
 import Control.Applicative hiding (empty)
 import Data.IORef
-import Data.Sequence hiding (reverse,scanl,take,drop)
+import qualified Data.Sequence as Seq
 import Prelude hiding (until,length)
 import qualified Prelude as P
 import Debug.Trace

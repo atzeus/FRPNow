@@ -6,7 +6,7 @@ import Impl.GTKFRPNow
 import Lib.Lib
 import Lib.EventStream
 import Swap
-import Data.Sequence.BSeq
+import Data.Sequence
 import Control.Applicative hiding (empty)
 import Data.Time.Clock.POSIX
 import Data.Foldable
@@ -17,9 +17,9 @@ type Time = Double
 type Duration = Double
 
 type Sample a = (Time,a)
-type History a = (a, BSeq (Time,a))
+type History a = (a, Seq (Time,a))
 
-type TimeSlice a = BSeq (Time,a)
+type TimeSlice a = Seq (Time,a)
 
 data Record a = Record { firstSample :: Sample a, rest :: BSeq (Sample a) } 
 
