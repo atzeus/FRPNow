@@ -26,9 +26,12 @@ module Control.FRPNow.Lib(
    foldB,
    sampleUntil,
    -- * Sample behaviors on events
-   plan,
+   planB,
    snapshot,
    (<@>),
+   -- * Type classes for uniform interface
+   Plan(..),
+   Sample(..),
    -- * Debugging 
    traceChanges )
    
@@ -134,14 +137,14 @@ data EvOrd l r = Simul l r
                | LeftEarlier l
                | RightEarlier r
 
+
 -- | Plan to sample the behavior carried by the event as soon as possible. 
 -- 
 -- If the resulting behavior is sampled after the event occurs,
 -- then the behavior carried by the event will be sampled now.
-plan :: Event (Behavior a) -> Behavior (Event a)
-plan e =  whenJust 
+planB :: Event (Behavior a) -> Behavior (Event a)
+planB e =  whenJust 
            (pure Nothing `switch` ((Just <$>) <$> e)) 
-
 
 
 -- | Obtain the value of the behavior at the time the event occurs
@@ -160,7 +163,19 @@ b <@> e = plan $ fmap (\x -> b <*> pure x) e
 
 
 
+-- | A type class to unifying 'planNow' and 'planB'
+class Monad b => Plan b where
+  plan :: Event (b a) -> b (Event a)
 
+instance Plan Now where plan = planNow
+instance Plan Behavior where plan = planB
+
+-- | A type class for behavior-like monads, such 'Now' and the monads from "Control.FRPNow.BehaviorEnd"
+class Monad n => Sample n where
+   sample :: Behavior a -> n a
+
+instance Sample Behavior where sample = id
+instance Sample Now where sample = sampleNow
 
 
 -- | A debug function, prints all values of the behavior to stderr, prepended with the given string.

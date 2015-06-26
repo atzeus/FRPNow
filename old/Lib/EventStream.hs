@@ -198,8 +198,7 @@ fold f i s = loop i where
               ev <- plan (loop <$> e')
               return (i `step` ev)
 
-parList :: Stream (BehaviorEnd b ()) -> Behavior (Behavior [b])
-parList = foldBs (pure []) (flip (.:))
+
 
 bufferStream :: Int -> Stream a -> Behavior (Stream [a])
 bufferStream i = scanlEv (\t h -> take i (h : t)) []

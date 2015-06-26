@@ -21,7 +21,7 @@ import Prelude hiding (until)
 -}
 
 
-main = runWx $ trace "Bla" $
+main = runWx $ 
             mdo  mousePos <-  toChanges (0,0) moveEvs
                  buttons   <- sample $ fold updateSet empty btnEvs
                  bxs <- sample (boxes mousePos buttons)

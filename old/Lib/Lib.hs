@@ -140,7 +140,7 @@ zipBE f (bx `Until` e) b = (f <$> bx <*> b) `switch` fmap (const b) e
 
 -- A task monad like abstraction, similar to "Monadic FRP"
 
-data BehaviorEnd x a = Until { behavior :: Behavior x, end ::  Event a }
+data Until x a = Until { behavior :: Behavior x, end ::  Event a }
 
 instance Monad (BehaviorEnd x) where
   return x = pure (error "ended!") `Until` pure x

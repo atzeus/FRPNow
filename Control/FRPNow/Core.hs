@@ -19,7 +19,7 @@ module Control.FRPNow.Core(
    -- $time
    Event,Behavior, never, switch, whenJust, futuristic,
   -- * IO interface
-   Now, async, callback, sample, planNow,  sync,
+   Now, async, callback, sampleNow, planNow,  sync,
   -- * Entry point
    runNowMaster,
    initNow) where
@@ -324,8 +324,8 @@ newtype Now a = Now { getNow :: M a } deriving (Functor,Applicative,Monad, Monad
 
 
 -- | Sample the present value of a behavior
-sample :: Behavior a -> Now a
-sample (B m) = Now $ fst <$> m
+sampleNow :: Behavior a -> Now a
+sampleNow (B m) = Now $ fst <$> m
 
 
 -- | Create an event that occurs when the callback is called. 
@@ -436,15 +436,11 @@ addPlan p = ReaderT $ \env -> modifyIORef (plansRef env)  (SomePlan p <|)
 -- | General interface to interact with the FRP system. 
 --
 -- Typically, you don't need this function, but instead use a specialized function for whatever library you want to use FRPNow with such as 'runNowGTK', 'runNowGloss'. These functions themselves are implemented using this function.
---
--- Parameters:
--- 
---   [@IO (Maybe a) -> IO ()@] An IO action that schedules some FRP actions to be run. The callee should ensure that all actions that are scheduled are ran on the same thread. If a scheduled action returns @Just x@, then the ending event has occured with value @x@ and now more FRP actions are scheduled.
---               
---   [@Now (Event a)@] The @Now@ computation to execute, resulting in the ending event, i.e. the event that stops the FRP system.
 
-
-initNow :: (IO (Maybe a) -> IO ()) ->  Now (Event a) -> IO ()
+initNow :: 
+      (IO (Maybe a) -> IO ()) -- ^ An IO action that schedules some FRP actions to be run. The callee should ensure that all actions that are scheduled are ran on the same thread. If a scheduled action returns @Just x@, then the ending event has occured with value @x@ and now more FRP actions are scheduled.
+  ->  Now (Event a) -- ^ The @Now@ computation to execute, resulting in the ending event, i.e. the event that stops the FRP system.
+  -> IO ()
 initNow schedule (Now m) = 
     mdo c <- newClock (schedule it)
         pr <- newIORef empty

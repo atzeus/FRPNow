@@ -1,7 +1,8 @@
 
 {-# LANGUAGE ConstraintKinds, FlexibleContexts, InstanceSigs,  NoMonomorphismRestriction, TypeOperators, MultiParamTypeClasses,FlexibleInstances #-}
 
-module Swap where
+module Control.Monad.Swap where
+
 import Control.Monad
 import Control.Applicative
 

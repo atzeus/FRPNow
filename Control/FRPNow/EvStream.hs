@@ -17,10 +17,12 @@ module Control.FRPNow.EvStream(
    emptyEs, 
    merge,
    toChanges,
+   edges,
    -- * Folds
   fromChanges,
   foldrSwitch,
   foldEs,
+  foldBs,
   -- * Filter and scan
   catMaybesEs,filterEs,filterMapEs,scanlEv, filterB, during, beforeEs,
   -- * Combine behavior and eventstream
@@ -111,6 +113,12 @@ snapshots b s = S $
 toChanges :: Eq a => Behavior a -> EvStream a
 toChanges = repeatEv . change
 
+-- | Get the events that the behavior changes from @False@ to @True@
+edges :: Behavior Bool -> EvStream ()
+edges = repeatEv . becomesTrue
+       
+
+ 
 repeatEv :: Behavior (Event a) -> EvStream a
 repeatEv b = S $ loop where
    loop = do e <- b
@@ -202,11 +210,16 @@ foldr1Ev f es = loop where
 foldrEv :: a -> (a -> Event b -> b) -> EvStream a -> Behavior b
 foldrEv i f es = f i <$> foldr1Ev f es
 
+
+
 -- | Start with the argument behavior, and switch to a new behavior each time 
 -- an event in the event stream occurs.
 foldrSwitch :: Behavior a -> EvStream (Behavior a) -> Behavior (Behavior a)
 foldrSwitch b = foldrEv b switch
 
+-- | Yet another type of fold.
+foldBs :: Behavior a -> (Behavior a -> b -> Behavior a) -> EvStream b -> Behavior (Behavior a)
+foldBs b f es = scanlEv f b es >>= foldrSwitch b
 
 -- | An event stream with only elements that occur before the argument event.
 beforeEs :: EvStream a -> Event () -> EvStream a
