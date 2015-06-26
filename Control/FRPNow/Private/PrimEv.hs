@@ -1,5 +1,5 @@
 {-# LANGUAGE LambdaCase  #-}
-module Control.PrimEv(Round, Clock, PrimEv, newClock , callbackp, spawn, curRound, newRound ,observeAt ) where
+module Control.FRPNow.Private.PrimEv(Round, Clock, PrimEv, newClock , callbackp, spawn, curRound, newRound ,observeAt ) where
 
 import Control.Applicative
 import System.IO.Unsafe

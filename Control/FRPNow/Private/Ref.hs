@@ -1,4 +1,4 @@
-module Control.Ref where
+module Control.FRPNow.Private.Ref where
 
 import System.Mem.Weak
 import Control.Applicative

@@ -30,12 +30,12 @@ import Control.Monad.IO.Class
 import Control.Monad.Reader  hiding (mapM_)
 import Control.Monad.Writer  hiding (mapM_)
 import Data.IORef
-import Control.Ref
+import Control.FRPNow.Private.Ref
+import Control.FRPNow.Private.PrimEv
 import Data.Sequence
 import System.IO.Unsafe
 import Data.Foldable hiding (null)
 import Debug.Trace
-import Control.PrimEv
 
 import Prelude hiding (mapM_,null)
 
