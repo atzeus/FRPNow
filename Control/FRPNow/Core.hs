@@ -19,7 +19,7 @@ module Control.FRPNow.Core(
    -- $time
    Event,Behavior, never, switch, whenJust, futuristic,
   -- * IO interface
-   Now, async, callback, sampleNow, planNow,  sync,
+   Now, async, asyncOS, callback, sampleNow, planNow,  sync,
   -- * Entry point
    runNowMaster,
    initNow) where
@@ -312,7 +312,7 @@ type M = ReaderT Env IO
 -- | A monad that alows you to:
 -- 
 --   * Sample the current value of a behavior via 'sample'
---   * Interact with the outside world via 'async', 'callback' and 'sync'.
+--   * Interact with the outside world via 'async',  'callback' and 'sync'.
 --   * Plan to do Now actions later, via 'planNow'
 --
 -- All actions in the @Now@ monad are conceptually instantaneous, which entails it is guaranteed that:
@@ -359,6 +359,14 @@ sync m = Now $ liftIO m
 async :: IO a -> Now (Event a)
 async m = Now $ do  c <- clock <$> ask
                     toE <$> liftIO (spawn c m)
+
+
+-- | Like 'async', but uses an OS thread instead of a regular lightweight thread.
+--
+-- Useful when interacting with GUI systems that claim the main loop, such as GTK.
+asyncOS :: IO a -> Now (Event a)
+asyncOS m = Now $ do  c <- clock <$> ask
+                      toE <$> liftIO (spawnOS c m)
 
 toE :: PrimEv a -> Event a
 toE p = E toEM where

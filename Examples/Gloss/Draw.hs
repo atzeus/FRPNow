@@ -24,7 +24,7 @@ import Prelude hiding (until)
 -}
 
 
-main = runNowGloss (InWindow "FRPNow Gloss!" (800,600) (10,10)) white 30 mainFRP
+main = runNowGloss (InWindow "FRPNow Gloss!" (800,600) (10,10)) white 60 mainFRP
 
 lerpColor :: Float -> Color -> Color -> Color
 lerpColor d ca cb = mixColors d (1-d) ca cb
@@ -33,7 +33,9 @@ mainFRP :: Behavior Float -> EvStream GEvent -> Now (Behavior Picture)
 mainFRP time evs = 
   do mousePos <-  sample $ toMousePos evs
      buttons   <- filterMouseButtons <$> sample (toKeysDown evs)
+     --traceChanges "mouse: " mousePos
      sample (boxes mousePos buttons)
+
 
 (.+) :: Point -> Point -> Point
 (x,y) .+ (x',y') = (x + x', y + y')
@@ -54,7 +56,7 @@ drawRect (Rect (xl,yu) (xr,yd)) = Polygon [(xl,yu),(xr,yu),(xr,yd),(xl,yd)]
 
 boxes :: Behavior Point -> Behavior (Set MouseButton) -> Behavior (Behavior Picture)
 boxes mousePos buttons = do boxes <- parList ( box `snapshots` clicks LeftButton )
-                            return (Pictures <$> boxes) where
+                            return (Pictures . reverse <$> boxes) where
   box :: Behavior (BehaviorEnd Picture ())
   box = open $
      do p1 <- sample mousePos

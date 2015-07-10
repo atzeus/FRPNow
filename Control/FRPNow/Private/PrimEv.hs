@@ -1,5 +1,5 @@
 {-# LANGUAGE LambdaCase  #-}
-module Control.FRPNow.Private.PrimEv(Round, Clock, PrimEv, newClock , callbackp, spawn, curRound, newRound ,observeAt ) where
+module Control.FRPNow.Private.PrimEv(Round, Clock, PrimEv, newClock , callbackp, spawn, spawnOS, curRound, newRound ,observeAt ) where
 
 import Control.Applicative
 import System.IO.Unsafe
@@ -43,6 +43,12 @@ spawn :: Clock -> IO a ->  IO (PrimEv a)
 spawn c m =
   do (pe,setVal) <- callbackp c
      forkIO $ m >>= setVal 
+     return pe
+
+spawnOS :: Clock -> IO a ->  IO (PrimEv a)
+spawnOS c m =
+  do (pe,setVal) <- callbackp c
+     forkOS $ m >>= setVal 
      return pe
 
 curRound :: Clock -> IO Round

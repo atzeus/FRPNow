@@ -7,6 +7,8 @@ import Control.Applicative
 import Control.Concurrent
 import Control.Monad.Trans
 
+-- Shows simple usage of FRPNow with GTK
+
 main :: IO ()
 main = runNowGTK $ do
 
@@ -41,12 +43,5 @@ clickMeButton = mdo count <- sample $ foldEs (\c _ -> c + 1) 0 clicks
                     (button, clicks) <- createButton message
                     return button
 
-
-createButton :: Behavior String ->  Now (Button,EvStream ())
-createButton s =  
-  do button <- sync $ buttonNew 
-     setAttr buttonLabel button s
-     stream <- getUnitSignal buttonActivated  button
-     return (button,stream)
 
 

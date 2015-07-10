@@ -9,7 +9,7 @@
 -- 
 -- This module provides interoperability of FRPNow and the gloss system.
 
-module Control.FRPNow.Gloss(GEvent,Time,runNowGloss, runNowGlossPure, toMouseMoves, toMousePos, toKeysDown) where
+module Control.FRPNow.Gloss(GEvent,Time,runNowGloss, runNowGlossPure, toMouseMoves, toMousePos, toKeysDown, filterMouseButtons) where
 
 import Graphics.Gloss.Interface.IO.Game hiding (Event)
 import Control.FRPNow

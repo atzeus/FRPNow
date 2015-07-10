@@ -31,13 +31,5 @@ main = runNowGTK $ mdo
   sync $  widgetShowAll window
 
 
-createSlider ::  Double -> Double -> Double -> Behavior Double -> Now (HScale,EvStream Double)
-createSlider min max step b =  
-  do i <- sample b
-     slider <- sync $ hScaleNewWithRange min max step
-     setAttr rangeValue slider b
-     stream <- getSignal changeValue slider (\f _ d -> f d >> return True) 
-     return (slider,stream)
-
 
 

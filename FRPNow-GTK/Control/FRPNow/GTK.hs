@@ -9,7 +9,12 @@
 -- 
 -- This module provides interoperability of FRPNow and the GTK system.
 
-module Control.FRPNow.GTK(runNowGTK, setAttr, getSignal, getUnitSignal, getSimpleSignal, getClock) where
+module Control.FRPNow.GTK(
+  -- * General interface
+  runNowGTK, setAttr, getSignal, getUnitSignal, getSimpleSignal, getClock,
+  -- * Utility functions
+  createLabel, createButton, createProgressBar,createSlider
+  ) where
 
 import Graphics.UI.Gtk
 import Control.FRPNow
@@ -109,6 +114,37 @@ getClock precision =
      sample $ fromChanges 0 res
 
 
+
+createLabel :: Behavior String -> Now Label
+createLabel s = 
+  do l <- sync $ labelNew (Nothing :: Maybe String)
+     setAttr labelLabel l s
+     return l
+
+
+createButton :: Behavior String ->  Now (Button,EvStream ())
+createButton s =  
+  do button <- sync $ buttonNew 
+     setAttr buttonLabel button s
+     stream <- getUnitSignal buttonActivated  button
+     return (button,stream)
+
+
+createProgressBar :: Now (ProgressBar, Double -> IO ()) 
+createProgressBar =
+              do (evs, cb) <- callbackStream
+                 progress <- sample $ fromChanges 0 evs
+                 bar <- sync $ progressBarNew
+                 setAttr progressBarFraction bar progress
+                 return (bar,cb)
+
+createSlider ::  Double -> Double -> Double -> Behavior Double -> Now (HScale,EvStream Double)
+createSlider min max step b =  
+  do i <- sample b
+     slider <- sync $ hScaleNewWithRange min max step
+     setAttr rangeValue slider b
+     stream <- getSignal changeValue slider (\f _ d -> f d >> return True) 
+     return (slider,stream)
 
 
 

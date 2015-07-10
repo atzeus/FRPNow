@@ -12,7 +12,7 @@ import Data.Maybe
 import Data.Set hiding (filter,fold, foldl,map)
 import Prelude hiding (until)
 
-main = runNowGloss (InWindow "FRPNow Gloss!" (800,600) (10,10)) white 30 mainFRP
+main = runNowGloss (InWindow "FRPNow Gloss!" (800,600) (10,10)) white 60 mainFRP
 
 lerpColor :: Float -> Color -> Color -> Color
 lerpColor d ca cb = mixColors d (1-d) ca cb

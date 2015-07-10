@@ -8,6 +8,9 @@ import Control.Applicative
 import Control.Concurrent
 import Control.Monad.Trans
 import Data.List
+
+-- Shows usage of FRPNow with GTK and time
+
 main :: IO ()
 main = runNowGTK $ mdo
 
@@ -23,12 +26,12 @@ main = runNowGTK $ mdo
 
   (ba,aclicks) <- createButton (pure "a")
   (bb,bclicks) <- createButton (pure "b")
-  clock <- getClock 0.03
+  clock <- getClock 0.2
 
   -- logic 
   let abclicks = ('a' <$ aclicks) `merge` ('b' <$ bclicks)
-  -- get letters in last 4 seconds
-  input <- sample $ lastInputs clock 4 abclicks
+  -- get letters in last 2.5 seconds
+  input <- sample $ lastInputs clock 2.5 abclicks
   -- get the event the code is correct
   correctEv <- sample $ when $ ("abbab" `isSuffixOf`) <$> input
 
@@ -39,7 +42,7 @@ main = runNowGTK $ mdo
   label <- createLabel text
 
   -- layout and more initialization
-  expl <- sync $ labelNew (Just "Type abbab within 4 seconds!")
+  expl <- sync $ labelNew (Just "Type abbab within 2.5 seconds!")
   sync $  boxPackStart vbox expl  PackNatural 0
   sync $  boxPackStart hbox ba PackNatural 0
   sync $  boxPackStart hbox bb PackNatural 0
@@ -47,15 +50,5 @@ main = runNowGTK $ mdo
   sync $  boxPackStart vbox label PackNatural 0
   sync $  widgetShowAll window
 
-createLabel :: Behavior String -> Now Label
-createLabel s = 
-  do l <- sync $ labelNew (Nothing :: Maybe String)
-     setAttr labelLabel l s
-     return l
 
-createButton :: Behavior String ->  Now (Button,EvStream ())
-createButton s =  
-  do button <- sync $ buttonNew 
-     setAttr buttonLabel button s
-     stream <- getUnitSignal buttonActivated  button
-     return (button,stream)
+
