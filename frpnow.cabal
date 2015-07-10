@@ -1,5 +1,5 @@
-Name:                FRPNow
-Version:             1.2.3
+Name:                frpnow
+Version:             0.1
 Synopsis:	     Principled practical FRP
 Description:         FRP with first-class behaviors and interalized IO, without space leaks
 License:             BSD3
@@ -11,11 +11,11 @@ Build-Type:          Simple
 Cabal-Version:       >=1.6
 Data-files:          ChangeLog
 Category:            Control
-Tested-With:         GHC==7.6.3
+Tested-With:         GHC==7.10.1
 Library
-  Build-Depends: base >= 2 && <= 6, mtl >= 1.0, containers, transformers, gtk, glib,gloss
-  Exposed-modules: Control.FRPNow,Control.FRPNow.Core, Control.FRPNow.Lib, Control.FRPNow.EvStream, Control.FRPNow.Time, Control.FRPNow.BehaviorEnd, Control.FRPNow.Gloss
-  other-modules: Control.PrimEv, Control.Ref
+  Build-Depends: base >= 2 && <= 6, mtl >= 1.0, containers, transformers
+  Exposed-modules: Control.FRPNow,Control.FRPNow.Core, Control.FRPNow.Lib, Control.FRPNow.EvStream, Control.FRPNow.Time, Control.FRPNow.BehaviorEnd
+  other-modules: Control.FRPNow.Private.PrimEv, Control.FRPNow.Private.Ref
   Extensions:	 RankNTypes, GADTs, CPP, EmptyDataDecls
 
 source-repository head

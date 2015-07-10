@@ -32,6 +32,11 @@ main =runWx $
 		 (moveEvs, btnEvs,ticks) <- boxWindowTimer "Hullo" 800 600 60 (map toBox <$> (makeCenters <$> points <*> clock))
                  return ()
 
+lerpPoint :: Double -> Point -> Point -> Point
+lerpPoint f l@(lx,ly) r@(rx,ry)
+       | f >= 1 = r
+       | f <= 0 = l
+       | otherwise = (lx * (1 - f) + rx * f, ly * (1 - f) + ry * f)
 
 toBox :: Point -> Box
 toBox p = Box red (rectAt (25,25) p)

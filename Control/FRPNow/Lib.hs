@@ -15,7 +15,7 @@ module Control.FRPNow.Lib(
    -- * Getting events from behaviors 
    when,
    change,
-   becomesTrue,
+   edge,
    -- * Events and their ordering
    tryGetEv,
    hasOccured,
@@ -46,6 +46,7 @@ import Debug.Trace
 
 
 -- | Shorthand for 
+-- 
 -- > pure a `switch` s
 step :: a -> Event (Behavior a) -> Behavior a
 step a s = pure a `switch` s
@@ -70,16 +71,19 @@ change b = futuristic $
 
 
 -- | The resulting behavior gives at any point in time, the event that the input
--- behavior next _becomes_ true. If the input behavior is True already, the event gives the
+-- behavior next _becomes_ true. I.e. the next event that there is an edge from False to True. If the input behavior is True already, the event gives the
 -- time that it is True again, after first being False for a period of time.
-becomesTrue :: Behavior Bool -> Behavior (Event ())
-becomesTrue b = futuristic $ 
+edge :: Behavior Bool -> Behavior (Event ())
+edge b = futuristic $ 
              b >>= \v -> 
               if v then (do e <- when (not <$> b)
                             join <$> plan (when b <$ e))
               else when b
 
--- | A fold over a behavior
+-- | A (left) fold over a behavior.
+--
+-- The inital value of the resulting behavior is @f i x@ where @i@ the initial value given, and @x@ is the current value of the behavior.
+--
 foldB :: Eq a => (b -> a -> b) -> b -> Behavior a -> Behavior (Behavior b)
 foldB f i b = loop i where
   loop i = do  c   <- b
@@ -176,6 +180,8 @@ class Monad n => Sample n where
 
 instance Sample Behavior where sample = id
 instance Sample Now where sample = sampleNow
+
+
 
 
 -- | A debug function, prints all values of the behavior to stderr, prepended with the given string.

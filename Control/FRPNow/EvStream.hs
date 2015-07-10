@@ -18,13 +18,16 @@ module Control.FRPNow.EvStream(
    merge,
    toChanges,
    edges,
-   -- * Folds
+   -- * Folds and scans
+  scanlEv,
+  foldrEv,
+  foldriEv,
   fromChanges,
   foldrSwitch,
   foldEs,
   foldBs,
   -- * Filter and scan
-  catMaybesEs,filterEs,filterMapEs,scanlEv, filterB, during, beforeEs,
+  catMaybesEs,filterEs,filterMapEs,filterMapEsB, filterB, during, beforeEs,
   -- * Combine behavior and eventstream
   (<@@>) , snapshots,
   -- * IO interface
@@ -115,7 +118,7 @@ toChanges = repeatEv . change
 
 -- | Get the events that the behavior changes from @False@ to @True@
 edges :: Behavior Bool -> EvStream ()
-edges = repeatEv . becomesTrue
+edges = repeatEv . edge
        
 
  
@@ -154,21 +157,25 @@ filterEs f s = catMaybesEs (toMaybef <$> s)
   where toMaybef x | f x = Just x
                    | otherwise = Nothing
 
-
+-- | Shorthand for 
+-- 
+-- > filterMapEs f e = catMaybesEs $ f <$> e
+filterMapEs :: (a -> Maybe b) -> EvStream a -> EvStream b
+filterMapEs f e = catMaybesEs $ f <$> e
 
 -- | Shorthand for 
 -- 
 -- > filterMapEs b e = catMaybesEs $ b <@@> e
 --
-filterMapEs :: Behavior (a -> Maybe b) -> EvStream a -> EvStream b
-filterMapEs f e = catMaybesEs $ f <@@> e
+filterMapEsB :: Behavior (a -> Maybe b) -> EvStream a -> EvStream b
+filterMapEsB f e = catMaybesEs $ f <@@> e
 
 
 -- | Filter events from an eventstream based on a function that
 -- changes over time 
 --
 filterB :: Behavior (a -> Bool) -> EvStream a -> EvStream a
-filterB f = filterMapEs (toMaybe <$> f)
+filterB f = filterMapEsB (toMaybe <$> f)
   where toMaybe f = \a ->  if f a then Just a else Nothing
 
 -- | Obtain only the events from input stream that occur while
@@ -190,7 +197,9 @@ scanlEv f i es = S <$> loop i where
 
 
 
--- | Fold over an eventstream to create a behavior (behavior depends on when
+
+
+-- | Left fold over an eventstream to create a behavior (behavior depends on when
 -- the fold started).
 foldEs :: (a -> b -> a) -> a -> EvStream b -> Behavior (Behavior a)
 foldEs f i s = loop i where
@@ -199,25 +208,46 @@ foldEs f i s = loop i where
               ev <- plan (loop <$> e')
               return (i `step` ev)
 
-foldr1Ev :: (a -> Event b -> b) -> EvStream a -> Behavior (Event b)
-foldr1Ev f es = loop where
+-- | Right fold over an eventstream
+-- 
+-- The result of folding over the rest of the event stream is in an event,
+-- since it can be only known in the future.
+-- 
+-- No initial value needs to be given, since the initial value is 'Control.FRPNow.Core.never'
+foldrEv :: (a -> Event b -> b) -> EvStream a -> Behavior (Event b)
+foldrEv f es = loop where
  loop =
   do e  <- nextAll es
      plan (nxt <$> e)
  nxt [h]     = f h          <$> loop
  nxt (h : t) = f h . return <$> nxt t
 
-foldrEv :: a -> (a -> Event b -> b) -> EvStream a -> Behavior b
-foldrEv i f es = f i <$> foldr1Ev f es
+
+-- | Right fold over an eventstream with a left initial value
+-- 
+-- Defined as:
+--
+-- > foldriEv i f ev =  f i <$> foldrEv f es
+foldriEv :: a -> (a -> Event b -> b) -> EvStream a -> Behavior b
+foldriEv i f es = f i <$> foldrEv f es
 
 
 
 -- | Start with the argument behavior, and switch to a new behavior each time 
 -- an event in the event stream occurs.
+--
+-- Defined as:
+-- 
+-- > foldrSwitch b = foldriEv b switch
+-- 
 foldrSwitch :: Behavior a -> EvStream (Behavior a) -> Behavior (Behavior a)
-foldrSwitch b = foldrEv b switch
+foldrSwitch b = foldriEv b switch
 
 -- | Yet another type of fold.
+--
+-- Defined as:
+--
+-- > foldBs b f es = scanlEv f b es >>= foldrSwitch b
 foldBs :: Behavior a -> (Behavior a -> b -> Behavior a) -> EvStream b -> Behavior (Behavior a)
 foldBs b f es = scanlEv f b es >>= foldrSwitch b
 

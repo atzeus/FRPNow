@@ -9,7 +9,7 @@
 -- 
 -- This module provides interoperability of FRPNow and the gloss system.
 
-module Control.FRPNow.Gloss(GEvent,runNowGloss,toMousePos, toKeysDown, filterMouseButtons) where
+module Control.FRPNow.Gloss(GEvent,Time,runNowGloss, runNowGlossPure, toMouseMoves, toMousePos, toKeysDown) where
 
 import Graphics.Gloss.Interface.IO.Game hiding (Event)
 import Control.FRPNow
@@ -27,12 +27,15 @@ import Debug.Trace
 
 -- | Alias for 'Gloss.Event' to prevent name clash with 'Event'.
 type GEvent = Gloss.Event
+-- | The gloss type for time.
+type Time = Float 
 
+-- | Run a Now computation which produced a behavior of type Picture, and draw that on screen.
 runNowGloss :: 
             Display  -- ^ Display mode.
          -> Color    -- ^ Background color.
          -> Int      -- ^ Maximum number of frames per second 
-         -> (Behavior Float -> EvStream GEvent -> Now (Behavior Picture))  -- ^ A now computation giving the picture to be displayed on the screen, taking the behavior of time and the eventstream of gloss events.
+         -> (Behavior Time -> EvStream GEvent -> Now (Behavior Picture))  -- ^ A now computation giving the picture to be displayed on the screen, taking the behavior of time and the eventstream of gloss events.
          -> IO ()
 runNowGloss disp bg fps m = 
   do scheduleRef <- newIORef Seq.empty
@@ -65,11 +68,26 @@ runNowGloss disp bg fps m =
 
   schedule ref m = atomicModifyIORef ref (\s -> (s |> m, ())) 
 
-toMousePos :: EvStream GEvent -> Behavior (Behavior (Float, Float))
-toMousePos evs = foldEs updateMouse (0,0) evs where
-  updateMouse _ (EventMotion p)  = p
-  updateMouse p _                = p
+-- | Like 'runNowGloss', but does not allow IO.
+runNowGlossPure ::   
+            Display  -- ^ Display mode.
+         -> Color    -- ^ Background color.
+         -> Int      -- ^ Maximum number of frames per second 
+         -> (Behavior Time -> EvStream GEvent -> Behavior (Behavior Picture))  -- ^ A now computation giving the picture to be displayed on the screen, taking the behavior of time and the eventstream of gloss events.
+         -> IO ()
+runNowGlossPure disp bg fps b = runNowGloss disp bg fps (\t e -> sample $ b t e)
 
+-- | Filter the mouse moves from an event stream of gloss events
+toMouseMoves :: EvStream GEvent -> EvStream (Float,Float) 
+toMouseMoves evs = filterMapEs getMouseMove evs
+  where getMouseMove (EventMotion p) = Just p
+        getMouseMove _               = Nothing
+
+-- | Get a behavior of the mouse position from an event stream of gloss events
+toMousePos :: EvStream GEvent -> Behavior (Behavior (Float, Float))
+toMousePos evs = fromChanges (0,0) (toMouseMoves evs) 
+
+-- | Get a behavior of the set of currently pressed keys from an event stream of gloss events
 toKeysDown :: EvStream GEvent -> Behavior (Behavior (Set Key))
 toKeysDown evs = foldEs updateSet Set.empty evs where
   updateSet :: Set Key -> GEvent -> Set Key

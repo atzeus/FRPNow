@@ -43,11 +43,7 @@ lerp l f r | f >= 1 = r
            | otherwise = l * (1 - f) + r * f
 
 
-lerpPoint :: Double -> Point -> Point -> Point
-lerpPoint f l@(lx,ly) r@(rx,ry)
-       | f >= 1 = r
-       | f <= 0 = l
-       | otherwise = (lx * (1 - f) + rx * f, ly * (1 - f) + ry * f)
+
 
 lerpColor :: Color -> Double -> Color -> Color
 lerpColor (C ra ga ba) f (C rb gb bb) = C (lerp ra f rb) (lerp ga f gb) (lerp ba f bb)

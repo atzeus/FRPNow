@@ -263,10 +263,11 @@ whenJustSample b = memoB (whenJustSample' b)
 -- | Not typically needed, used for event streams.
 --  
 -- If we have a behavior giving events, such that each time the behavior is
--- sampled the obtained event is in the future. Then this function
+-- sampled the obtained event is in the future, then this function
 -- ensures that we can use the event without inspecting it (i.e. before binding it).
 --
--- If the implementation samples such an event and it turns 
+-- If the implementation samples such an event and it turns out the event does actually occur at the time
+-- the behavior is sampled, an error is thrown.
 futuristic :: Behavior (Event a) -> Behavior (Event a)
 futuristic b =  B $ do e <- makeLazy (joinEm <$> runB b) 
                        return (fst <$> e, snd <$> e)
@@ -317,8 +318,8 @@ type M = ReaderT Env IO
 -- All actions in the @Now@ monad are conceptually instantaneous, which entails it is guaranteed that:
 -- 
 -- @
---    do x <- sample b; y <- sample b; return (x,y) 
--- == do x <- sample b; return (x,x) 
+--    do x <- sample b; m ; y <- sample b; return (x,y) 
+-- == do x <- sample b; m ; return (x,x) 
 -- @
 newtype Now a = Now { getNow :: M a } deriving (Functor,Applicative,Monad, MonadFix)
 
@@ -342,7 +343,7 @@ callback = Now $ do c <- clock <$> ask
                     return (toE pe,cb)
 -- | Synchronously execte an IO action.
 -- 
--- Use this is for IO actions which take little time, such as 
+-- Use this is for IO actions which do not take a long time, such as 
 -- opening a file or creating a widget.
 sync :: IO a -> Now a
 sync m = Now $ liftIO m
@@ -435,7 +436,7 @@ addPlan p = ReaderT $ \env -> modifyIORef (plansRef env)  (SomePlan p <|)
 
 -- | General interface to interact with the FRP system. 
 --
--- Typically, you don't need this function, but instead use a specialized function for whatever library you want to use FRPNow with such as 'runNowGTK', 'runNowGloss'. These functions themselves are implemented using this function.
+-- Typically, you don't need this function, but instead use a specialized function for whatever library you want to use FRPNow with such as 'Control.FRPNow.GTK.runNowGTK' or 'Control.FRPNow.Gloss.runNowGloss', which themselves are implemented using this function.
 
 initNow :: 
       (IO (Maybe a) -> IO ()) -- ^ An IO action that schedules some FRP actions to be run. The callee should ensure that all actions that are scheduled are ran on the same thread. If a scheduled action returns @Just x@, then the ending event has occured with value @x@ and now more FRP actions are scheduled.
@@ -503,7 +504,7 @@ runLazies = ReaderT $ runEm where
 
 -- | Run the FRP system in master mode.
 --
--- Typically, you don't need this function, but instead use a function for whatever library you want to use FRPNow with such as 'runNowGTK', 'runNowGloss'. This function can be used in case you are not interacting with any library that claims the main loop.
+-- Typically, you don't need this function, but instead use a function for whatever library you want to use FRPNow with such as 'Control.FRPNow.GTK.runNowGTK', 'Control.FRPNow.Gloss.runNowGloss'. This function can be used in case you are not interacting with any library that claims the main loop.
 --
 -- Runs the given @Now@ computation and the plans it makes until the ending event (given by the inital @Now@ computation) occurs. Returns the value of the ending event.
 

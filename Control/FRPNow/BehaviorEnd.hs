@@ -18,7 +18,7 @@
 -- >    b1 `Until` e2
 --
 -- for behaviors consisting of multiple phases.
--- This concept is similar to "Monadic FRP" (Haskell symposium 2013, by me) and
+-- This concept is similar to "Monadic FRP" (Haskell symposium 2013, van der Ploeg) and
 --  the Task monad abstraction (Lambda in motion: Controlling robots with haskell, Peterson, Hudak and Elliot, PADL 1999) 
 module Control.FRPNow.BehaviorEnd(
    -- * Until
