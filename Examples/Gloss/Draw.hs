@@ -77,7 +77,7 @@ boxes mousePos buttons = do boxes <- parList ( box `snapshots` clicks LeftButton
     loop :: Rect -> (Behavior :. BehaviorEnd Rect) ()
     loop r = do let rb = pure r
                 rb `till` next (clicks MiddleButton `during` mouseOver rb)
-                off <- trace "Hullo!" $ sample mouseOffset
+                off <- sample mouseOffset
                 let r' = (r `moveRect`) <$> off
                 r' `till` release MiddleButton
                 sample r' >>= loop

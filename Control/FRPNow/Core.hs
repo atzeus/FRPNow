@@ -10,6 +10,8 @@
 -- 
 -- The core FRPNow interface, based on the paper "Principled Practical FRP: Forget the past, Change the future, FRPNow!", ICFP 2015, by Atze van der Ploeg and Koenem Claessem.
 -- 
+-- This module contains the core FRPNow interface, which consists of:
+--
 --  * The pure interface, which has denotational semantics
 --  * The IO interface
 --  * The entry points, i.e. the functions that are used to start the FRP system.
@@ -42,6 +44,8 @@ import Prelude
 --------------------------------------------------------------------}
 
 -- $time
+-- The FRPNow interface is centered around behaviors, values that change over time, and events, value that are known from some point in time on.
+--
 -- What the pure part of the FRPNow interface does is made precise by denotation semantics, i.e. mathematical meaning. The denotational semantics of the pure interface are
 -- 
 -- @ 
@@ -54,7 +58,9 @@ import Prelude
 --   return x = (-∞,x)
 --   (ta,a) >>= f = let (tb,b) = f a
 --                  in (max ta tb, b)
--- 
+--
+-- type Behavior a = Time -> a 
+--
 -- instance Monad Behavior where
 --   return x = λt -> x
 --   m >>= f  = λt -> f (m t) t 
@@ -73,13 +79,14 @@ import Prelude
 --       else (w, fromJust (b w))
 -- @
 -- 
--- @Time@ which is totally ordered set and has a least element, -∞.
+-- Where @Time@ is a set that is totally ordered set and has a least element, -∞.
 -- For events, we also use @Time+ = Time ∪ ∞@. 
 --
 -- The notation @minSet x@ indicates the minimum element of the set @x@, which is not valid Haskell, but is a valid denotation. Note that if there is no time at which the input behavior is @Just@ in the present or future, then @minSet@ will give the minimum element of the empty set, which is @∞@.
 --   
+-- The monad instance of events is denotationally a writer monad in time, whereas the monad instance of behaviors is denotationally a reader monad in time.
 
--- | An event is a value that is known from some point in time on. Denotationally a writer monad in time.
+-- | An event is a value that is known from some point in time on. 
 data Event a  
   = Never
   | Occ a 
@@ -136,7 +143,7 @@ memoE e = unsafePerformIO $ memoEIO e
   
 -- Section 6.3
 
--- | An behavior is a value that changes over time. Denotationally a reader monad in time.
+-- | An behavior is a value that changes over time.
 
 data Behavior a = B (M (a, Event (Behavior a)))
                 | Const a 
@@ -318,11 +325,11 @@ type M = ReaderT Env IO
 
 -- | A monad that alows you to:
 -- 
---   * Sample the current value of a behavior via 'sample'
+--   * Sample the current value of a behavior via 'sampleNow'
 --   * Interact with the outside world via 'async',  'callback' and 'sync'.
 --   * Plan to do Now actions later, via 'planNow'
 --
--- All actions in the @Now@ monad are conceptually instantaneous, which entails it is guaranteed that:
+-- All actions in the @Now@ monad are conceptually instantaneous, which entails it is guaranteed that for any behavior @b@ and Now action @m@:
 -- 
 -- @
 --    do x <- sample b; m ; y <- sample b; return (x,y) 
@@ -363,6 +370,9 @@ sync m = Now $ liftIO m
 --
 -- Use this for IO actions which might take a long time, such as waiting for a network message,
 -- reading a large file, or expensive computations.
+--
+-- /Note/:Use this only when using FRPNow with Gloss or something else that does not block haskell threads. 
+-- For use with GTK or other GUI libraries that do block Haskell threads, use 'asyncOS' instead.
 async :: IO a -> Now (Event a)
 async m = Now $ do  c <- clock <$> ask
                     toE <$> liftIO (spawn c m)
@@ -521,10 +531,9 @@ runLazies = ReaderT $ runEm where
                             e'    -> liftIO $ writeIORef r e'
 
 
-
 -- | Run the FRP system in master mode.
 --
--- Typically, you don't need this function, but instead use a function for whatever library you want to use FRPNow with such as 'Control.FRPNow.GTK.runNowGTK', 'Control.FRPNow.Gloss.runNowGloss'. This function can be used in case you are not interacting with any library that claims the main loop.
+-- Typically, you don't need this function, but instead use a function for whatever library you want to use FRPNow with such as 'Control.FRPNow.GTK.runNowGTK', 'Control.FRPNow.Gloss.runNowGloss'. This function can be used in case you are not interacting with any GUI library, only using FRPNow.
 --
 -- Runs the given @Now@ computation and the plans it makes until the ending event (given by the inital @Now@ computation) occurs. Returns the value of the ending event.
 

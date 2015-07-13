@@ -71,7 +71,7 @@ change b = futuristic $
 
 
 -- | The resulting behavior gives at any point in time, the event that the input
--- behavior next _becomes_ true. I.e. the next event that there is an edge from False to True. If the input behavior is True already, the event gives the
+-- behavior next /becomes/ true. I.e. the next event that there is an edge from False to True. If the input behavior is True already, the event gives the
 -- time that it is True again, after first being False for a period of time.
 edge :: Behavior Bool -> Behavior (Event ())
 edge b = futuristic $ 

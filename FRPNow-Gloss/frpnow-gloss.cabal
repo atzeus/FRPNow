@@ -1,0 +1,22 @@
+Name:                frpnow-gloss
+Version:             0.1
+Synopsis:	     Program awesome stuff with Gloss and frpnow!
+Description:         Program awesome stuff with Gloss and frpnow!
+License:             BSD3
+License-file:        LICENSE
+Author:              Atze van der Ploeg
+Maintainer:          atzeus@gmail.com
+Homepage:            https://github.com/atzeus/FRPNow
+Build-Type:          Simple
+Cabal-Version:       >=1.6
+Data-files:          ChangeLog
+Category:            Control
+Tested-With:         GHC==7.10.1
+Library
+  Build-Depends: base >= 2 && <= 6, mtl >= 1.0, containers, transformers, frpnow, gloss
+  Exposed-modules: Control.FRPNow.Gloss
+  Extensions:	 RankNTypes, GADTs, CPP, EmptyDataDecls
+
+source-repository head
+    type:     git
+    location: https://github.com/atzeus/FRPNow/FRPNow-Gloss

@@ -298,7 +298,7 @@ callStream f evs = do e2 <- sample (nextAll evs)
                return ()
 
 
--- | Execute  the given IO action each time an event occurs. The IO action is executed on the main thread.
+-- | Execute  the given IO action each time an event occurs. The IO action is executed on the main thread, so it should not take a long time.
 callIOStream :: (a -> IO ()) -> EvStream a -> Now ()
 callIOStream f = callStream (\x -> sync (mapM_ f x) >> return ())
 
