@@ -125,8 +125,7 @@ edges = repeatEv . edge
 repeatEv :: Behavior (Event a) -> EvStream a
 repeatEv b = S $ loop where
    loop = do e <- b
-             let e' = (\x -> [x]) <$> e
-             pure e' `switch` (loop <$ e)
+             return $  (\x -> [x]) <$> e
 
 
 -- | Create a behavior from an initial value and 

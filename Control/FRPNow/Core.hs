@@ -32,12 +32,10 @@ import Control.Monad.Writer  hiding (mapM_)
 import Data.IORef
 import Control.FRPNow.Private.Ref
 import Control.FRPNow.Private.PrimEv
-import Data.Sequence
 import System.IO.Unsafe
-import Data.Foldable hiding (null)
 import Debug.Trace
 
-import Prelude hiding (mapM_,null)
+import Prelude 
 
 {--------------------------------------------------------------------
   Pure interface
@@ -108,8 +106,6 @@ Never   `bindE` _ = Never
 (Occ x) `bindE` f = f x
 (E m)   `bindE` f = E $ bindEM m f
 
-joinE :: Event (Event a) -> Event a
-joinE m = m >>= id
 
 bindEM :: M (Event a) -> (a -> Event b) -> M (Event b)
 m   `bindEM` f = 
@@ -153,28 +149,32 @@ runB (Const a) = return (a, never)
 switch' ::  Behavior a -> Event (Behavior a) -> Behavior a
 switch' b Never = b
 switch' _ (Occ b) = b
-switch' b (E em) = B $
+switch' (Const x) (E em) = B $ 
+     em >>= \r -> case r of
+          Never -> return (x,never)
+          Occ b' -> runB b'
+          E em'  -> return (x, E em')
+switch' (B bm) (E em) = B $
     em >>= \r -> case r of
-        Never      -> runB b
+        Never      -> bm
         Occ   b'   -> runB b'
-        e' -> do  (h,t) <- runB b
-                  return (h, switchE t e')
+        E em'      -> 
+            do  (h,t) <- bm
+                return $ case t of
+                  Occ _ -> error "switch already occured!"
+                  Never -> (h, E em')
+                  E tm  -> (h, switchEM tm em')
 
-switchE :: Event (Behavior a) -> Event (Behavior a) -> Event (Behavior a)
-switchE Never   r          = r
-switchE l       Never      = l
-switchE _       (Occ b)    = Occ b
-switchE (Occ b) r@(E _)    = Occ (b `switch'` r)
--- next case, same as above, different strictness properties
--- (do not run lm unless needed)
-switchE (E lm)  r@(E rm)   = E $
-  rm >>= \case 
+switchEM :: M (Event (Behavior a)) -> M (Event (Behavior a)) -> Event (Behavior a)
+switchEM lm rm = E $ 
+ rm >>= \case 
     Never -> lm
     Occ b -> return (Occ b)
-    r'    -> lm >>= return . \case
-         Never -> r'
-         Occ b -> Occ (b `switch'` r)
-         l'    -> switchE l' r'
+    E rm'    -> lm >>= return . \case
+         Never -> E rm'
+         Occ b -> Occ (b `switch'` E rm')
+         E lm' -> switchEM lm' rm'
+
 
 bindB :: Behavior a -> (a -> Behavior b) -> Behavior b
 bindB (Const x) f = f x
@@ -183,7 +183,14 @@ bindB (B m)     f = B $
         case f h of
           Const x -> return (x, (`bindB` f) <$> t)
           B n     -> do (hn,tn) <- n
-                        return (hn, switchE tn ((`bindB` f) <$> t))
+                        tn <- runE tn
+                        return $ case (t,tn) of
+                          (_, Occ _)  -> error "switch already occured!"
+                          (Occ _ , _) -> error "switch already occured!"
+                          (Never , e) -> (hn, e)
+                          (e, Never ) -> (hn, (`bindB` f) <$> t)
+                          (e, E tm) -> (hn, switchEM tm (runE ((`bindB` f) <$> e)) )
+
 
 
 whenJust' :: Behavior (Maybe a) -> Behavior (Event a)
@@ -377,27 +384,30 @@ toE p = E toEM where
 getRound :: M Round
 getRound = ReaderT $ \env -> curRound (clock env)  
 
-data Plan a = Plan (Event (M a)) (IORef (Maybe a))
+
+-- IORef
+type Plan a = IORef (Either (Event (M a)) a)
 
 planToEv :: Plan a -> Event a
-planToEv (Plan ev ref) = E planToEvM where
- planToEvM = 
+planToEv ref = self where
+ self = E $ 
   liftIO (readIORef ref) >>= \pstate -> 
   case pstate of
-   Just x   -> return (Occ x)
-   Nothing  -> runE ev >>= \estate ->
+   Right x   -> return (Occ x)
+   Left ev   -> runE ev >>= \estate ->
     case estate of
-     Occ m  -> do  v <- m
-                   liftIO $ writeIORef ref (Just v)
-                   return $ Occ v
-     ev' -> return $ E $ planToEvM
+     Occ m  -> do x <- m
+                  liftIO $ writeIORef ref (Right x)
+                  return $ Occ x
+     ev' -> do liftIO $ writeIORef ref (Left ev')
+               return self
 
 
 data SomePlan = forall a. SomePlan (Ref (Plan a))
-type Plans = Seq SomePlan
+type Plans = [SomePlan]
 
 
-type Lazies = Seq Lazy
+type Lazies = [Lazy]
 data Lazy = forall a. Lazy (M (Event a)) (IORef (Event a))
 
 
@@ -405,7 +415,7 @@ makeLazy :: M (Event a) -> M (Event a)
 makeLazy m =  ReaderT $ \env ->
        do n <- curRound (clock env)   
           r <- newIORef undefined
-          modifyIORef (laziesRef env) (Lazy m r <|)
+          modifyIORef (laziesRef env) (Lazy m r :)
           return (readLazyState n r)
 
 readLazyState :: Round -> IORef (Event a) -> Event a
@@ -420,7 +430,7 @@ readLazyState n r =
 
 
 planM :: Event (M a) -> M (Event a)
-planM e = plan makeWeakRef e
+planM e = plan makeWeakIORef e
 
 
 -- | Plan to execute a 'Now' computation.
@@ -430,15 +440,16 @@ planM e = plan makeWeakRef e
 planNow :: Event (Now a) -> Now (Event a)
 planNow e = Now $ plan makeStrongRef (getNow  <$> e)
 
-plan :: (forall x. x -> IO (Ref x)) -> Event (M a) -> M (Event a)
+plan :: (forall v. IORef v -> IO (Ref (IORef v))) -> Event (M a) -> M (Event a)
 plan makeRef e = 
-  do p <- Plan e <$> liftIO (newIORef Nothing)
+  do p <- liftIO (newIORef $ Left e)
+     let ev = planToEv p
      pr <- liftIO (makeRef p)
      addPlan pr
-     return (planToEv p)
+     return ev
 
 addPlan :: Ref (Plan a) -> M ()
-addPlan p = ReaderT $ \env -> modifyIORef (plansRef env)  (SomePlan p <|) 
+addPlan p = ReaderT $ \env -> modifyIORef (plansRef env)  (SomePlan p :) 
 
 
 
@@ -452,8 +463,8 @@ initNow ::
   -> IO ()
 initNow schedule (Now m) = 
     mdo c <- newClock (schedule it)
-        pr <- newIORef empty
-        lr <- newIORef empty
+        pr <- newIORef []
+        lr <- newIORef []
         let env = Env pr lr c
         let it = runReaderT (iteration e) env
         e <- runReaderT m env
@@ -482,8 +493,9 @@ tryPlans :: M ()
 tryPlans = ReaderT $ tryEm where
   tryEm env = 
     do pl <- readIORef (plansRef env)
-       writeIORef (plansRef env) empty
-       runReaderT (mapM_ tryPlan pl) env
+       --putStrLn ("nr plans: " ++ show (length pl))
+       writeIORef (plansRef env) []
+       runReaderT (mapM_ tryPlan (reverse pl)) env
   tryPlan (SomePlan pr) = 
    do  ps <-  liftIO (deRef pr) 
        case ps of
@@ -499,8 +511,8 @@ runLazies = ReaderT $ runEm where
     readIORef (laziesRef env) >>= \pl ->
        if null pl 
        then return ()
-       else do writeIORef (laziesRef env) empty
-               runReaderT (mapM_ runLazy pl) env
+       else do writeIORef (laziesRef env) []
+               runReaderT (mapM_ runLazy (reverse pl)) env
                runEm env where
   runLazy (Lazy m r) = do e <- m
                           x <- runE e
