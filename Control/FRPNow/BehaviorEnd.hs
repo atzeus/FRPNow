@@ -36,6 +36,7 @@ import Control.FRPNow.Core
 import Control.FRPNow.Lib
 import Control.FRPNow.EvStream
 import Control.Monad
+import Control.Applicative
 
 data BehaviorEnd x a = Until { behavior :: Behavior x, end ::  Event a }
 

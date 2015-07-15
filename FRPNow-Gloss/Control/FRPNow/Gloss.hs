@@ -14,6 +14,7 @@ module Control.FRPNow.Gloss(GEvent,Time,runNowGloss, runNowGlossPure, toMouseMov
 import Graphics.Gloss.Interface.IO.Game hiding (Event)
 import Control.FRPNow
 import Data.Sequence
+import Control.Applicative
 import qualified Data.Sequence as Seq
 import Data.Maybe
 import Data.IORef

@@ -23,6 +23,7 @@ module Control.FRPNow.Lib(
    cmpTime,
    EvOrd(..),
    -- * Fold and state
+   prev,
    foldB,
    sampleUntil,
    -- * Sample behaviors on events
@@ -59,6 +60,15 @@ when b = whenJust (boolToMaybe <$> b) where
   boolToMaybe True   = Just ()
   boolToMaybe False  = Nothing
 
+
+prev :: Eq a => a -> Behavior a -> Behavior (Behavior a)
+prev i b = loop i where
+  loop i = do e <- nxtCur
+              return (i `step` e)
+  nxtCur = futuristic $ 
+             do cur <- b
+                e <- change b
+                planB (loop cur <$ e)
 
 -- | Gives at any point in time the event that the input behavior changes, and the new value of the input behavior.
 change :: Eq a => Behavior a -> Behavior (Event a)

@@ -162,7 +162,10 @@ switch' (Const x) (E em) = B $
           Occ b' -> runB b'
           E em'  -> return (x, E em')
 switch' (B bm) (E em) = B $
-    em >>= \r -> case r of
+    -- liftIO (traceIO "switching!") >>
+    em >>= \r ->
+     -- liftIO (traceIO "ran ev") >>
+     case r of
         Never      -> bm
         Occ   b'   -> runB b'
         E em'      -> 
@@ -204,8 +207,8 @@ whenJust' :: Behavior (Maybe a) -> Behavior (Event a)
 whenJust' (Const Nothing)  = pure never
 whenJust' (Const (Just x)) = pure (pure x)
 whenJust' (B m) = B $ 
-    do  (h, t) <- m
-        case h of
+    do (h, t) <- m
+       case h of
          Just x -> return (return x, whenJust'  <$> t)
          Nothing -> 
           do  en <- planM (runB . whenJust'  <$> t)
@@ -220,7 +223,7 @@ whenJustSample' (B bm) = B $
      case h of
       Just x -> do v <- fst <$> runB x; return (pure v, whenJustSample' <$> t)
       Nothing -> do en <- planM (runB . whenJustSample' <$> t)
-                    return (en >>= fst, en >>= snd)
+                    return (en >>= fst, never)
 
 instance Monad Behavior where
   return x = B $ return (x, never)
@@ -228,8 +231,8 @@ instance Monad Behavior where
 
 instance MonadFix Behavior where
   mfix f = B $ mfix $ \(~(h,_)) ->
-       do  ~(h',t) <- runB (f h)
-           return (h, mfix f <$ t)
+       do  (h',t) <- runB (f h)
+           return (h', mfix f <$ t )
 
 -- | Introduce a change over time.
 --
@@ -262,7 +265,7 @@ switch b e = memoB (switch' b e)
 -- If @b@ never again is positive then the result is 'never'.
 
 whenJust :: Behavior (Maybe a) -> Behavior (Event a)
-whenJust b = memoB (whenJust' b)
+whenJust b = (whenJust' b)
 
 
 -- | A more optimized version of:
@@ -284,7 +287,7 @@ whenJustSample b = memoB (whenJustSample' b)
 -- the behavior is sampled, an error is thrown.
 futuristic :: Behavior (Event a) -> Behavior (Event a)
 futuristic b =  B $ do e <- makeLazy (joinEm <$> runB b) 
-                       return (fst <$> e, snd <$> e)
+                       return (fst <$> e,snd <$> e)
   where joinEm (e,es) = (,) <$> e <*> es
 
 unrunB :: (a,Event (Behavior a)) -> Behavior a 
@@ -503,11 +506,12 @@ tryPlans :: M ()
 tryPlans = ReaderT $ tryEm where
   tryEm env = 
     do pl <- readIORef (plansRef env)
-       --putStrLn ("nr plans: " ++ show (length pl))
+      -- putStrLn ("nr plans: " ++ show (length pl))
        writeIORef (plansRef env) []
        runReaderT (mapM_ tryPlan (reverse pl)) env
   tryPlan (SomePlan pr) = 
-   do  ps <-  liftIO (deRef pr) 
+   do  -- liftIO (traceIO "plan!")
+       ps <-  liftIO (deRef pr) 
        case ps of
         Just p -> do  eres <- runE (planToEv p)
                       case eres of

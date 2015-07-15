@@ -17,6 +17,7 @@ module Control.FRPNow.GTK(
   ) where
 
 import Graphics.UI.Gtk
+import Control.Applicative
 import Control.FRPNow
 import Data.Maybe
 import Data.IORef
