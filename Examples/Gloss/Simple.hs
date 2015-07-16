@@ -27,7 +27,7 @@ mainFRP time evs =
        done = Translate (-300) 0 $ Scale 0.4 0.4 $ Text "I'm done with it"
    in do mousePos <- sample (toMousePos evs)
          keys     <- sample (toKeysDown evs)
-         let spaceDown = (SpecialKey KeySpace `elem`) <$> keys
+         let spaceDown = (SpecialKey KeySpace `member`) <$> keys
 
          e <- sample $ when ((>= 30.0) <$> time)
          plan (sync (putStrLn "You've done this for half a minute!") <$ e)
