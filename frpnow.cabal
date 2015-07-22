@@ -1,5 +1,5 @@
 Name:                frpnow
-Version:             0.11
+Version:             0.13
 Synopsis:	     Principled practical FRP
 Description:         FRP with first-class behaviors and interalized IO, without space leaks
 License:             BSD3

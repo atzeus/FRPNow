@@ -1,0 +1,4 @@
+0.13 Removed Show from integrate, added cstep
+0.12 Fixed BehaviorFix, added integration
+0.11 Fixed import applicative
+0.1 Initial version

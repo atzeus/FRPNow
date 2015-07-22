@@ -12,6 +12,7 @@
 module Control.FRPNow.Lib(
    -- * Behavior construction
    step,
+   cstep,
    -- * Getting events from behaviors 
    when,
    change,
@@ -46,11 +47,22 @@ import Prelude hiding (until)
 import Debug.Trace
 
 
--- | Shorthand for 
+-- | Start with a constant and then switch 
 -- 
--- > pure a `switch` s
+-- Defined as: 
+--
+-- > step a s = pure a `switch` s
 step :: a -> Event (Behavior a) -> Behavior a
 step a s = pure a `switch` s
+
+
+-- | Start with a constant, and switch to another constant when the event arrives.
+--
+-- Defined as:
+-- 
+-- >  cstep x e y = pure x `switch` (pure y <$ e)
+cstep :: a -> Event x -> a -> Behavior a
+cstep x e y = pure x `switch` (pure y <$ e)
 
 -- | Like 'Control.FRPNow.whenJust' but on behaviors of type @Bool@ instead of @Maybe@. 
 -- 
