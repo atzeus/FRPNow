@@ -338,8 +338,7 @@ type M = ReaderT Env IO
 --    do x <- sample b; m ; y <- sample b; return (x,y) 
 -- == do x <- sample b; m ; return (x,x) 
 -- @
-newtype Now a = Now { getNow :: M a } deriving (Functor,Applicative,Monad, MonadFix)
-
+newtype Now a = Now { getNow :: M a } deriving (Functor,Applicative,Monad, MonadFix, MonadIO)
 
 -- | Sample the present value of a behavior
 sampleNow :: Behavior a -> Now a
