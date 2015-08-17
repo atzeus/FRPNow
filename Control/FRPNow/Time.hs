@@ -130,7 +130,7 @@ integrate :: (VectorSpace v time) =>
 integrate time v = do t <- time 
                       vp <- delay time (t,zeroVector) ((,) <$> time <*> v)
                       foldB add zeroVector $ (,) <$> vp <*> time
-   where add total ((t1,v),t2) = total ^+^ (((t2 - t1) * 0.5) *^ v)
+   where add total ((t1,v),t2) = total ^+^ ((t2 - t1) *^ v)
 
 
 -- | Delay a behavior by one tick of the clock. Occasionally useful to prevent immediate feedback loops.
