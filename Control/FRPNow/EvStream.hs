@@ -1,3 +1,6 @@
+{-# LANGUAGE ScopedTypeVariables,TypeOperators,MultiParamTypeClasses, FunctionalDependencies, FlexibleInstances #-}
+
+
 -----------------------------------------------------------------------------
 -- |
 -- Module      :  Control.FRPNow.EvStream
@@ -16,6 +19,7 @@ module Control.FRPNow.EvStream(
    -- * Construction
    emptyEs, 
    merge,
+dropEv,
    toChanges,
    edges,
    -- * Folds and scans
@@ -139,10 +143,18 @@ fromChanges i s = loop i where
 
 
 
+dropEv :: Int -> EvStream a -> EvStream a
+dropEv i (S s) = S $ loop i where
+  loop 0 = s
+  loop i = do e <- s
+              join <$> plan (loop (i-1) <$ e)
+
+
 -- | Filter the 'Just' values from an event stream.
 --
 catMaybesEs :: EvStream (Maybe a) -> EvStream a
 catMaybesEs s = S $ loop where
+--  loop :: Behavior (Event [a])
   loop = do  e <- getEs s
              join <$> plan (nxt <$> e)
   nxt l = case  catMaybes l of
@@ -264,10 +276,11 @@ beforeEs s e = S $ beforeEv `switch` en
 
 -- | Create an event stream that has an event each time the
 -- returned function is called. The function can be called from any thread.
-callbackStream :: Now (EvStream a, a -> IO ())
+callbackStream :: forall a. Now (EvStream a, a -> IO ())
 callbackStream = do mv <- sync $ newIORef ([], Nothing)
                     (_,s) <- loop mv
                     return (S s, func mv) where
+  loop :: IORef ( [a], Maybe (() -> IO ()) ) -> Now ([a], Behavior (Event [a]))
   loop mv =
          do (l, Nothing) <- sync $ readIORef mv
             (e,cb) <- callback

@@ -21,6 +21,7 @@ instance Show Round where
   show (Round _ i) = show i
 
 
+
 -- when given a IO action that schedules a round, create a new clock
 newClock :: IO () -> IO Clock
 newClock schedule = Clock <$> newUnique <*> pure schedule <*> newIORef 0 <*> newIORef False
