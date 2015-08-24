@@ -33,7 +33,7 @@ dropEv,
   -- * Filter and scan
   catMaybesEs,filterEs,filterMapEs,filterMapEsB, filterB, during, beforeEs,
   -- * Combine behavior and eventstream
-  (<@@>) , snapshots,
+  (<@@>) , snapshots, delay,
   -- * IO interface
   callbackStream,callStream, callIOStream,
   -- * Debug 
@@ -273,6 +273,24 @@ beforeEs s e = S $ beforeEv `switch` en
         choose (Right x) = return x
             
 
+-- | Delay a behavior by one tick of the ``clock''.
+--
+-- The event stream functions as the ``clock'': the input behavior is sampled on each 
+-- event, and the current value of the output behavior is always the previously sample. 
+--
+--  Occasionally useful to prevent immediate feedback loops.
+delay ::  EvStream x -- ^ The event stream that functions as the ``clock''
+          -> a -- ^ The inital value of the output behavior
+          -> Behavior a  -- ^ The input behavior
+          -> Behavior (Behavior a)
+delay s i b = loop i where
+  loop i =
+           do e <- futuristic $ 
+                        do cur <- b
+                           e <- getEs s
+                           return (cur <$ e)
+              e' <- plan ( loop <$> e)
+              return (i `step` e')
 
 -- | Create an event stream that has an event each time the
 -- returned function is called. The function can be called from any thread.

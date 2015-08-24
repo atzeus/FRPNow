@@ -16,7 +16,7 @@
 -- The clock itself is created by a function specialized to the
 -- GUI library you are using FRP with such as 'Control.FRPNow.GTK.getClock'
 
-module Control.FRPNow.Time(localTime,timeFrac, lastInputs, bufferBehavior,delayBy, delayByN, delay, integrate, VectorSpace(..)) where
+module Control.FRPNow.Time(localTime,timeFrac, lastInputs, bufferBehavior,delayBy, delayByN, delayTime, integrate, VectorSpace(..)) where
 
 import Control.FRPNow.Core
 import Control.FRPNow.Lib
@@ -128,14 +128,14 @@ delayByN clock dur n b =
 integrate :: (VectorSpace v time) => 
              Behavior time -> Behavior v -> Behavior (Behavior v)
 integrate time v = do t <- time 
-                      vp <- delay time (t,zeroVector) ((,) <$> time <*> v)
+                      vp <- delayTime time (t,zeroVector) ((,) <$> time <*> v)
                       foldB add zeroVector $ (,) <$> vp <*> time
    where add total ((t1,v),t2) = total ^+^ ((t2 - t1) *^ v)
 
 
--- | Delay a behavior by one tick of the clock. Occasionally useful to prevent immediate feedback loops.
-delay ::  Eq time  =>  Behavior time -> a -> Behavior a -> Behavior (Behavior a)
-delay time i b = loop i where
+-- | Delay a behavior by one tick of the clock. Occasionally useful to prevent immediate feedback loops. Like 'Control.FRPNow.EvStream.delay', but uses the changes of the clock as an event stream.
+delayTime ::  Eq time  =>  Behavior time -> a -> Behavior a -> Behavior (Behavior a)
+delayTime time i b = loop i where
   loop i =
            do e <- futuristic $ 
                         do (t,cur) <- (,) <$> time <*> b

@@ -1,4 +1,4 @@
-{-# LANGUAGE LambdaCase,RecursiveDo, FlexibleContexts, ExistentialQuantification, Rank2Types,GeneralizedNewtypeDeriving  #-}
+{-# LANGUAGE DeriveDataTypeable, LambdaCase,RecursiveDo, FlexibleContexts, ExistentialQuantification, Rank2Types,GeneralizedNewtypeDeriving  #-}
 -----------------------------------------------------------------------------
 -- |
 -- Module      :  Control.FRPNow.Core
@@ -511,7 +511,7 @@ data Lazy = forall a. Lazy (M (Event a)) (IORef (Event a))
 makeLazy :: M (Event a) -> M (Event a)
 makeLazy m =  ReaderT $ \env ->
        do n <- curRound (clock env)   
-          r <- newIORef undefined
+          r <- newIORef (error "should not have read lazy yet")
           modifyIORef (laziesRef env) (Lazy m r :)
           return (readLazyState n r)
 
@@ -535,7 +535,12 @@ planM e = plan makeWeakIORef e
 -- When given a event carrying a now computation, execute that now computation as soon as the event occurs.
 -- If the event has already occured when 'planNow' is called, then the 'Now' computation will be executed immediatly.
 planNow :: Event (Now a) -> Now (Event a)
-planNow e = Now $ plan makeStrongRef (getNow  <$> e)
+planNow e = Now $ 
+  do e' <- runE e
+     case e' of
+      Occ x -> pure <$> getNow x
+      Never -> return Never
+      _     -> plan makeStrongRef (getNow  <$> e)
 
 plan :: (forall v. IORef v -> IO (Ref (IORef v))) -> Event (M a) -> M (Event a)
 plan makeRef e = 
@@ -565,7 +570,7 @@ initNow schedule (Now m) =
         let env = Env pr lr c
         let it = runReaderT (iteration e) env
         e <- runReaderT m env
-        schedule (runReaderT (iterationMeat e) env)
+        runReaderT (iterationMeat e) env
         return ()
 
 iteration :: Event a -> M (Maybe a)

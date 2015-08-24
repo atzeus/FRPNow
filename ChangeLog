@@ -1,3 +1,6 @@
+0.16 Added EvStream.delay
+0.15 Fixes a Prelude.undefined error
+0.14 Fixes a space leak, fixes integration being factor 2 off
 0.13 Removed Show from integrate, added cstep
 0.12 Fixed BehaviorFix, added integration
 0.11 Fixed import applicative

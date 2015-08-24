@@ -73,6 +73,9 @@ when b = whenJust (boolToMaybe <$> b) where
   boolToMaybe False  = Nothing
 
 
+-- | Gives the previous value of the behavior, starting with given value. 
+-- 
+--  This /cannot/ be used to prevent immediate feedback loop! Use 'Control.FRPNow.EvStream.delay' instead!
 prev :: Eq a => a -> Behavior a -> Behavior (Behavior a)
 prev i b = loop i where
   loop i = do e <- nxtCur
@@ -185,6 +188,8 @@ snapshot b e =  let e' = (Just <$> b) <$ e
 -- value of the given behavior at that time.
 (<@>) :: Behavior (a -> b) -> Event a -> Behavior (Event b)
 b <@> e = plan $ fmap (\x -> b <*> pure x) e
+
+
 
 
 
