@@ -22,6 +22,7 @@ module Control.FRPNow.EvStream(
 dropEv,
    toChanges,
    edges,
+joinEs,
    -- * Folds and scans
   scanlEv,
   foldrEv,
@@ -205,9 +206,12 @@ scanlEv f i es = S <$> loop i where
      ev <- plan (loop . last <$> e')
      return (pure e' `switch` ev)
 
-
-
-
+-- | Turns an event of an event stream into an event stream.
+joinEs :: Event (EvStream b) -> EvStream b
+joinEs e = S $ before `switch` after where
+  before = join <$> plan (getEs <$> e)
+  after = getEs <$> e
+              
 
 
 -- | Left fold over an eventstream to create a behavior (behavior depends on when

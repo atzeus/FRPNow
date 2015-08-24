@@ -1,3 +1,4 @@
+0.17 Added EvStream.joinEs
 0.16 Added EvStream.delay
 0.15 Fixes a Prelude.undefined error
 0.14 Fixes a space leak, fixes integration being factor 2 off
