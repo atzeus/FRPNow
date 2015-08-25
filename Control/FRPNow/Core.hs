@@ -1,6 +1,7 @@
 {-# LANGUAGE DeriveDataTypeable, LambdaCase,RecursiveDo, FlexibleContexts, ExistentialQuantification, Rank2Types,GeneralizedNewtypeDeriving  #-}
 -----------------------------------------------------------------------------
 -- |
+
 -- Module      :  Control.FRPNow.Core
 -- Copyright   :  (c) Atze van der Ploeg 2015
 -- License     :  BSD-style

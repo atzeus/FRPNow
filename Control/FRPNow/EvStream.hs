@@ -19,6 +19,7 @@ module Control.FRPNow.EvStream(
    -- * Construction
    emptyEs, 
    merge,
+collapseSimul,
 dropEv,
    toChanges,
    edges,
@@ -93,6 +94,10 @@ merge l r = loop where
   nxt (Simul       l r) = l ++ r
   nxt (LeftEarlier   l) = l
   nxt (RightEarlier  r) = r
+
+-- | Collapses each set simultanious events into a single event carrying the list of occurances.
+collapseSimul :: EvStream a -> EvStream [a]
+collapseSimul (S s) = S $ ((\x -> [x]) <$>) <$> s
 
 -- | Obtain the next element of the event stream. The obtained event is guaranteed to lie in the future.
 next :: EvStream a -> Behavior (Event a)

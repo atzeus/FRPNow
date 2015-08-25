@@ -1,3 +1,4 @@
+0.17 Added EvStream.collapseSimul
 0.17 Added EvStream.joinEs
 0.16 Added EvStream.delay
 0.15 Fixes a Prelude.undefined error
