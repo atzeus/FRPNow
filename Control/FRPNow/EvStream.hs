@@ -95,7 +95,7 @@ merge l r = loop where
   nxt (LeftEarlier   l) = l
   nxt (RightEarlier  r) = r
 
--- | Collapses each set simultanious events into a single event carrying the list of occurances.
+-- | Collapses each set of simultaneous events into a single event carrying the list of occurrences.
 collapseSimul :: EvStream a -> EvStream [a]
 collapseSimul (S s) = S $ ((\x -> [x]) <$>) <$> s
 
