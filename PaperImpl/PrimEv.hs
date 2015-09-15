@@ -1,4 +1,3 @@
-{-# LANGUAGE LambdaCase  #-}
 module PrimEv(Round, Clock, PrimEv, newClock , spawn, curRound, waitEndRound ,observeAt ) where
 
 import ConcFlag
