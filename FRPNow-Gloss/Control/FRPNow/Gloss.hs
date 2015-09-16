@@ -74,7 +74,7 @@ runNowGlossPure ::
             Display  -- ^ Display mode.
          -> Color    -- ^ Background color.
          -> Int      -- ^ Maximum number of frames per second 
-         -> (Behavior Time -> EvStream GEvent -> Behavior (Behavior Picture))  -- ^ A now computation giving the picture to be displayed on the screen, taking the behavior of time and the eventstream of gloss events.
+         -> (Behavior Time -> EvStream GEvent -> Behavior (Behavior Picture))  -- ^ A behavior giving the picture to be displayed on the screen, taking the behavior of time and the eventstream of gloss events.
          -> IO ()
 runNowGlossPure disp bg fps b = runNowGloss disp bg fps (\t e -> sample $ b t e)
 

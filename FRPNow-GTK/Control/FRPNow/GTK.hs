@@ -75,8 +75,8 @@ getSimpleSignal s w = getSignal s w id
 -- in our example, a function of type @(ScollType,Double) -> IO ()@ and produces
 -- a function of the form @callback@, in our example @(ScrollType -> Double -> IO Bool)@.
 --
--- In this example we can covert a signal with hander @(ScrollType -> Double -> IO Bool)@ 
--- to an eventstream giving elements of type @(ScrollType,Double)@ by letting the handler return @False@ 
+-- In this example we can convert a signal with handler @(ScrollType -> Double -> IO Bool)@
+-- to an eventstream giving elements of type @(ScrollType,Double)@ by letting the handler return @False@
 -- as follows:
 --
 -- > scrollToEvStream :: Signal widget (ScrollType -> Double -> IO Bool) -> widget -> Now (EvStream (ScrollType,Double))
@@ -93,7 +93,7 @@ getSignal s w conv =
       return res
 
 
--- | Get a clock that gives the time since the creation of the clock in seconds, and updates maximally even given numer of seconds.
+-- | Get a clock that gives the time since the creation of the clock in seconds, and updates maximally even given number of seconds.
 --
 -- The clock is automatically destroyed and all resources associated with the clock are freed 
 -- when the behavior is garbage collected.

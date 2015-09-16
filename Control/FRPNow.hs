@@ -6,8 +6,8 @@
 -- Maintainer  :  atzeus@gmail.org
 -- Stability   :  provisional
 -- Portability :  portable
--- 
--- An FRP library with first-class and higher-order behaviors, and interalized IO. 
+--
+-- An FRP library with first-class and higher-order behaviors, and internalized IO. 
 --
 -- Based on the paper <http://www.cse.chalmers.se/~atze/papers/prprfrp.pdf Principled Practical FRP: Forget the past, Change the future, FRPNow!>, ICFP 2015, by Atze van der Ploeg and Koenem Claessem.
 --

@@ -47,9 +47,9 @@ import Prelude
 --------------------------------------------------------------------}
 
 -- $time
--- The FRPNow interface is centered around behaviors, values that change over time, and events, value that are known from some point in time on.
+-- The FRPNow interface is centered around behaviors, values that change over time, and events, values that are known from some point in time on.
 --
--- What the pure part of the FRPNow interface does is made precise by denotation semantics, i.e. mathematical meaning. The denotational semantics of the pure interface are
+-- What the pure part of the FRPNow interface does is made precise by denotational semantics, i.e. mathematical meaning. The denotational semantics of the pure interface are
 -- 
 -- @ 
 -- type Event a = (Time+,a)
@@ -113,7 +113,7 @@ instance Monad Event where
   (E m)   >>= f = memoE $ bindInternal m f
 
 
--- | A never occuring event
+-- | A never occurring event
 
 never :: Event a
 never = Never
@@ -180,7 +180,7 @@ memoE e = unsafePerformIO $ memoEIO e
   
 -- Section 6.3
 
--- | An behavior is a value that changes over time.
+-- | A behavior is a value that changes over time.
 
 data Behavior a = B (M (a, Event (Behavior a)))
                 | Const a 
@@ -412,7 +412,7 @@ data Env = Env {
 
 type M = ReaderT Env IO
 
--- | A monad that alows you to:
+-- | A monad that allows you to:
 -- 
 --   * Sample the current value of a behavior via 'sampleNow'
 --   * Interact with the outside world via 'async',  'callback' and 'sync'.
@@ -435,7 +435,7 @@ sampleNow (B m) = Now $ fst <$> m
 -- 
 -- The callback can be safely called from any thread. An error occurs if the callback is called more than once. 
 --
--- See 'Control.FRPNow.EvStream.callbackStream' for a callback that can be called repeatidly.
+-- See 'Control.FRPNow.EvStream.callbackStream' for a callback that can be called repeatedly.
 --  
 -- The event occurs strictly later than the time that 
 -- the callback was created, even if the callback is called immediately.
@@ -443,16 +443,16 @@ callback ::  Now (Event a, a -> IO ())
 callback = Now $ do c <- clock <$> ask
                     (pe, cb) <- liftIO $ callbackp c
                     return (toE pe,cb)
--- | Synchronously execte an IO action.
+-- | Synchronously execute an IO action.
 -- 
 -- Use this is for IO actions which do not take a long time, such as 
 -- opening a file or creating a widget.
 sync :: IO a -> Now a
 sync m = Now $ liftIO m
 
--- | Asynchronously execte an IO action, and obtain the event that it is done.
--- 
--- Starts a seperate thread for the IO action, and then immediatly returns the 
+-- | Asynchronously execute an IO action, and obtain the event that it is done.
+--
+-- Starts a separate thread for the IO action, and then immediatly returns the
 -- event that the IO action is done. Since all actions in the 'Now' monad are instantaneous,
 -- the resulting event is guaranteed to occur in the future (not now).
 --
@@ -534,7 +534,7 @@ planM e = plan makeWeakIORef e
 -- | Plan to execute a 'Now' computation.
 --
 -- When given a event carrying a now computation, execute that now computation as soon as the event occurs.
--- If the event has already occured when 'planNow' is called, then the 'Now' computation will be executed immediatly.
+-- If the event has already occurred when 'planNow' is called, then the 'Now' computation will be executed immediately.
 planNow :: Event (Now a) -> Now (Event a)
 planNow e = Now $ 
   do e' <- runE e
@@ -561,7 +561,7 @@ addPlan p = ReaderT $ \env -> modifyIORef (plansRef env)  (SomePlan p :)
 -- Typically, you don't need this function, but instead use a specialized function for whatever library you want to use FRPNow with such as 'Control.FRPNow.GTK.runNowGTK' or 'Control.FRPNow.Gloss.runNowGloss', which themselves are implemented using this function.
 
 initNow :: 
-      (IO (Maybe a) -> IO ()) -- ^ An IO action that schedules some FRP actions to be run. The callee should ensure that all actions that are scheduled are ran on the same thread. If a scheduled action returns @Just x@, then the ending event has occured with value @x@ and now more FRP actions are scheduled.
+      (IO (Maybe a) -> IO ()) -- ^ An IO action that schedules some FRP actions to be run. The callee should ensure that all actions that are scheduled are ran on the same thread. If a scheduled action returns @Just x@, then the ending event has occurred with value @x@ and now more FRP actions are scheduled.
   ->  Now (Event a) -- ^ The @Now@ computation to execute, resulting in the ending event, i.e. the event that stops the FRP system.
   -> IO ()
 initNow schedule (Now m) = 

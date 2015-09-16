@@ -59,13 +59,13 @@ import Debug.Trace
 
 -- | The (abstract) type of event streams.
 --
--- Denotationally, one can think of an eventstream a value 
--- of type 
+-- Denotationally, one can think of an eventstream as a value
+-- of type
 --
 -- > [(Time,a)]
 --
--- Where the points in time are non-strictly increasing.
--- There can be multiple simulatinous events in an event stream.
+-- where the points in time are non-strictly increasing.
+-- There can be multiple simultaneous events in an event stream.
 
 newtype EvStream a = S { getEs :: Behavior (Event [a]) }
 
@@ -138,8 +138,8 @@ repeatEv b = S $ loop where
              return $  (\x -> [x]) <$> e
 
 
--- | Create a behavior from an initial value and 
--- a event stream of updates.
+-- | Create a behavior from an initial value and
+-- an event stream of updates.
 --
 fromChanges :: a -> EvStream a -> Behavior (Behavior a)
 fromChanges i s = loop i where
@@ -284,8 +284,8 @@ beforeEs s e = S $ beforeEv `switch` en
 
 -- | Delay a behavior by one tick of the ``clock''.
 --
--- The event stream functions as the ``clock'': the input behavior is sampled on each 
--- event, and the current value of the output behavior is always the previously sample. 
+-- The event stream functions as the ``clock'': the input behavior is sampled on each
+-- event, and the current value of the output behavior is always the previous sample.
 --
 --  Occasionally useful to prevent immediate feedback loops.
 delay ::  EvStream x -- ^ The event stream that functions as the ``clock''

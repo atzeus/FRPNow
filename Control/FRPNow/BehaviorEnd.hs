@@ -56,8 +56,8 @@ instance Applicative (BehaviorEnd x) where pure = return ; (<*>) = ap
 combineUntil :: (a -> b -> b) -> BehaviorEnd a x -> Behavior b -> Behavior b
 combineUntil f (bx `Until` e) b = (f <$> bx <*> b) `switch` fmap (const b) e
 
--- | Add the values in the behavior of the @Until@ to the front of the list 
--- until the end event happsens.
+-- | Add the values in the behavior of the @Until@ to the front of the list
+-- until the end event happens.
 (.:) :: BehaviorEnd a x -> Behavior [a] -> Behavior [a]
 (.:) = combineUntil (:)
 
@@ -128,7 +128,7 @@ instance Swap f g => Monad (f :. g) where
   return  = Close . return . return
   m >>= f = joinComp (fmap2m f m)
 
--- anoyance that Monad is not a subclass of functor
+-- annoyance that Monad is not a subclass of functor
 fmap2m f = Close . liftM (liftM f) . open
 
 joinComp :: (Swap b e) => (b :. e) ((b :. e) x) -> (b :. e) x

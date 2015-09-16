@@ -19,7 +19,7 @@ module Control.FRPNow.Lib(
    edge,
    -- * Events and their ordering
    tryGetEv,
-   hasOccured,
+   hasOccurred,
    first,
    cmpTime,
    EvOrd(..),
@@ -107,7 +107,7 @@ edge b = futuristic $
 
 -- | A (left) fold over a behavior.
 --
--- The inital value of the resulting behavior is @f i x@ where @i@ the initial value given, and @x@ is the current value of the behavior.
+-- The inital value of the resulting behavior is @f i x@ where @i@ is the initial value given, and @x@ is the current value of the behavior.
 --
 foldB :: Eq a => (b -> a -> b) -> b -> Behavior a -> Behavior (Behavior b)
 foldB f i b = loop i where
@@ -124,36 +124,36 @@ sampleUntil :: Eq a => Behavior a -> Event () -> Behavior (Event [a])
 sampleUntil b end  = loop [] where
   loop ss = do s <- b
                let ss' = s : ss
-               e <- hasOccured end
+               e <- hasOccurred end
                if e then return (pure (reverse ss'))
                else do c <- change b
                        join <$> plan (loop ss' <$ c)
 
 
--- | Convert an event into a behavior that gives 
--- @Nothing@ if the event has not occured yet, and @Just@ the value of the event if the event has already occured.
+-- | Convert an event into a behavior that gives
+-- @Nothing@ if the event has not occurred yet, and @Just@ the value of the event if the event has already occurred.
 tryGetEv :: Event a -> Behavior (Maybe a)
 tryGetEv e = pure Nothing `switch` ((pure . Just) <$> e)
 
--- | The resulting behavior states wheter the input event has already occured.
-hasOccured :: Event x -> Behavior Bool
-hasOccured e = False `step` (pure True <$ e)
+-- | The resulting behavior states whether the input event has already occurred.
+hasOccurred :: Event x -> Behavior Bool
+hasOccurred e = False `step` (pure True <$ e)
 
 -- | Gives the first of two events. 
 -- 
 -- If either of the events lies in the future, then the result will be the first of these events.
--- If both events have already occured, the left event is returned.
+-- If both events have already occurred, the left event is returned.
 first :: Event a -> Event a -> Behavior (Event a)
 first l r = whenJust (tryGetEv r `switch` ((pure . Just) <$> l))
 
 -- | Compare the time of two events.
 -- 
--- The resulting behavior gives an event, occuring at the same time 
+-- The resulting behavior gives an event, occurring at the same time
 -- as the earliest input event, of which the value indicates if the event where
--- simultanious, or if one was earlier. 
+-- simultaneous, or if one was earlier.
 --
--- If at the time of sampling both event lie in the past, then 
--- the result is that they are simulatinous.
+-- If at the time of sampling both events lie in the past, then
+-- the result is that they are simultaneous.
 cmpTime :: Event a -> Event b -> Behavior (Event (EvOrd a b))
 cmpTime l r = whenJust (outcome <$> tryGetEv l <*> tryGetEv r) where
   outcome Nothing  Nothing  = Nothing
@@ -161,7 +161,7 @@ cmpTime l r = whenJust (outcome <$> tryGetEv l <*> tryGetEv r) where
   outcome Nothing  (Just y) = Just (RightEarlier y)
   outcome (Just x) (Just y) = Just (Simul x y)
 
--- | The outcome of a 'cmpTime': the events occur simultanious, left is earlier or right is earlier.
+-- | The outcome of a 'cmpTime': the events occur simultaneous, left is earlier or right is earlier.
 data EvOrd l r = Simul l r
                | LeftEarlier l
                | RightEarlier r
@@ -178,7 +178,7 @@ planB e =  whenJust
 
 -- | Obtain the value of the behavior at the time the event occurs
 --
--- If the event has already occured when sampling the resulting behavior,
+-- If the event has already occurred when sampling the resulting behavior,
 -- we sample not the past, but the current value of the input behavior.
 snapshot :: Behavior a -> Event () -> Behavior (Event a)
 snapshot b e =  let e' = (Just <$> b) <$ e
@@ -194,7 +194,7 @@ b <@> e = plan $ fmap (\x -> b <*> pure x) e
 
 
 
--- | A type class to unifying 'planNow' and 'planB'
+-- | A type class to unify 'planNow' and 'planB'
 class Monad b => Plan b where
   plan :: Event (b a) -> b (Event a)
 
