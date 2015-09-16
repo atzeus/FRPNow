@@ -46,8 +46,8 @@ timeFrac t d = do t' <- localTime t
 tagTime :: (Floating time, Ord time) => Behavior time  -> EvStream a -> EvStream (time,a)
 tagTime c s = ((,) <$> c) <@@> s
 
--- | Gives a behavior containing the values of the events in the stream that occured in the last n seconds
-lastInputs :: (Floating time, Ord time) => 
+-- | Gives a behavior containing the values of the events in the stream that occurred in the last n seconds
+lastInputs :: (Floating time, Ord time) =>
     Behavior time -- ^ The "clock" behavior, the behavior monotonically increases with time
     -> time -- ^ The duration of the history to be kept
     -> EvStream a -- ^ The input stream
