@@ -1,4 +1,4 @@
-{-# LANGUAGE DeriveDataTypeable, LambdaCase,RecursiveDo, FlexibleContexts, ExistentialQuantification, Rank2Types,GeneralizedNewtypeDeriving  #-}
+{-# LANGUAGE DeriveDataTypeable, RecursiveDo, FlexibleContexts, ExistentialQuantification, Rank2Types,GeneralizedNewtypeDeriving  #-}
 -----------------------------------------------------------------------------
 -- |
 

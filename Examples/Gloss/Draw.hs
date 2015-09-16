@@ -93,8 +93,8 @@ boxes mousePos buttons = do boxes <- parList ( box `snapshots` clicks LeftButton
   mouseOver r = isInside <$> mousePos <*> r
 
   clicks :: MouseButton	-> EvStream ()
-  clicks m   = edges $ (m `elem`) <$> buttons
-  releases m = edges $ not . (m `elem`) <$> buttons
+  clicks m   = edges $ (m `Set.member`) <$> buttons
+  releases m = edges $ not . (m `Set.member`) <$> buttons
   release m = next (releases m)
   
 

@@ -1,4 +1,3 @@
-{-# LANGUAGE LambdaCase  #-}
 module Control.FRPNow.Private.PrimEv(Round, Clock, PrimEv, newClock , callbackp, spawn, spawnOS, curRound, newRound ,observeAt ) where
 
 import Control.Applicative
