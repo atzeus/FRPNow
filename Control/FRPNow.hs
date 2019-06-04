@@ -9,12 +9,12 @@
 --
 -- An FRP library with first-class and higher-order behaviors, and internalized IO. 
 --
--- Based on the paper <http://www.cse.chalmers.se/~atze/papers/prprfrp.pdf Principled Practical FRP: Forget the past, Change the future, FRPNow!>, ICFP 2015, by Atze van der Ploeg and Koenem Claessem.
+-- Based on the paper <https://github.com/beerendlauwers/haskell-papers-ereader/blob/05c3bc023072a6fc5b1a09e11b5f59298fa8cc2b/papers/Practical%20Principled%20FRP%20-%20Forget%20the%20past%2C%20change%20the%20future%2C%20FRPNow!.pdf Principled Practical FRP: Forget the past, Change the future, FRPNow!>, ICFP 2015, by Atze van der Ploeg and Koenem Claessem.
 --
 -- The packages @FRPNow-GTK@ and @FRPNow-Gloss@ hook up FRPNow to GUI toolkits via the functions 'Control.FRPNow.GTK.runNowGTK' and 'Control.FRPNow.Gloss.runNowGloss'
 --
 --
--- To understand what is going on, I suggest you look at the <https://github.com/atzeus/FRPNow/tree/master/Examples examples>, and read section 1-5 of the <http://www.cse.chalmers.se/~atze/papers/prprfrp.pdf paper>. 
+-- To understand what is going on, I suggest you look at the <https://github.com/atzeus/FRPNow/tree/master/Examples examples>, and read section 1-5 of the <https://github.com/beerendlauwers/haskell-papers-ereader/blob/05c3bc023072a6fc5b1a09e11b5f59298fa8cc2b/papers/Practical%20Principled%20FRP%20-%20Forget%20the%20past%2C%20change%20the%20future%2C%20FRPNow!.pdf paper>. 
 --
 -- The package contains the following modules:
 --
