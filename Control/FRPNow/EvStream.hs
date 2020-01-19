@@ -9,15 +9,15 @@
 -- Maintainer  :  atzeus@gmail.org
 -- Stability   :  provisional
 -- Portability :  portable
--- 
+--
 -- Event streams for FRPNow
 
 module Control.FRPNow.EvStream(
   EvStream,
-  -- * Observe 
-  next, nextAll, 
+  -- * Observe
+  next, nextAll,
    -- * Construction
-   emptyEs, 
+   emptyEs,
    merge,
 collapseSimul,
 dropEv,
@@ -38,7 +38,7 @@ joinEs,
   (<@@>) , snapshots, delay,
   -- * IO interface
   callbackStream,callStream, callIOStream,
-  -- * Debug 
+  -- * Debug
   traceEs)
 
   where
@@ -72,16 +72,18 @@ newtype EvStream a = S { getEs :: Behavior (Event [a]) }
 instance Functor EvStream where
   fmap f (S b) = S $ (fmap f <$>) <$> b
 
+instance Semigroup (EvStream a) where
+  (<>) = merge
+
 instance Monoid (EvStream a) where
   mempty = emptyEs
-  mappend = merge
 
 -- | The empty event stream
 emptyEs :: EvStream a
 emptyEs = S $ pure never
 
 -- | Merge two event stream.
--- 
+--
 -- In case of simultaneity, the left elements come first
 merge :: EvStream a -> EvStream a -> EvStream a
 merge l r = loop where
@@ -129,9 +131,9 @@ toChanges = repeatEv . change
 -- | Get the events that the behavior changes from @False@ to @True@
 edges :: Behavior Bool -> EvStream ()
 edges = repeatEv . edge
-       
 
- 
+
+
 repeatEv :: Behavior (Event a) -> EvStream a
 repeatEv b = S $ loop where
    loop = do e <- b
@@ -174,14 +176,14 @@ filterEs f s = catMaybesEs (toMaybef <$> s)
   where toMaybef x | f x = Just x
                    | otherwise = Nothing
 
--- | Shorthand for 
--- 
+-- | Shorthand for
+--
 -- > filterMapEs f e = catMaybesEs $ f <$> e
 filterMapEs :: (a -> Maybe b) -> EvStream a -> EvStream b
 filterMapEs f e = catMaybesEs $ f <$> e
 
--- | Shorthand for 
--- 
+-- | Shorthand for
+--
 -- > filterMapEs b e = catMaybesEs $ b <@@> e
 --
 filterMapEsB :: Behavior (a -> Maybe b) -> EvStream a -> EvStream b
@@ -189,7 +191,7 @@ filterMapEsB f e = catMaybesEs $ f <@@> e
 
 
 -- | Filter events from an eventstream based on a function that
--- changes over time 
+-- changes over time
 --
 filterB :: Behavior (a -> Bool) -> EvStream a -> EvStream a
 filterB f = filterMapEsB (toMaybe <$> f)
@@ -216,7 +218,7 @@ joinEs :: Event (EvStream b) -> EvStream b
 joinEs e = S $ before `switch` after where
   before = join <$> plan (getEs <$> e)
   after = getEs <$> e
-              
+
 
 
 -- | Left fold over an eventstream to create a behavior (behavior depends on when
@@ -229,10 +231,10 @@ foldEs f i s = loop i where
               return (i `step` ev)
 
 -- | Right fold over an eventstream
--- 
+--
 -- The result of folding over the rest of the event stream is in an event,
 -- since it can be only known in the future.
--- 
+--
 -- No initial value needs to be given, since the initial value is 'Control.FRPNow.Core.never'
 foldrEv :: (a -> Event b -> b) -> EvStream a -> Behavior (Event b)
 foldrEv f es = loop where
@@ -244,7 +246,7 @@ foldrEv f es = loop where
 
 
 -- | Right fold over an eventstream with a left initial value
--- 
+--
 -- Defined as:
 --
 -- > foldriEv i f ev =  f i <$> foldrEv f es
@@ -253,13 +255,13 @@ foldriEv i f es = f i <$> foldrEv f es
 
 
 
--- | Start with the argument behavior, and switch to a new behavior each time 
+-- | Start with the argument behavior, and switch to a new behavior each time
 -- an event in the event stream occurs.
 --
 -- Defined as:
--- 
+--
 -- > foldrSwitch b = foldriEv b switch
--- 
+--
 foldrSwitch :: Behavior a -> EvStream (Behavior a) -> Behavior (Behavior a)
 foldrSwitch b = foldriEv b switch
 
@@ -280,7 +282,7 @@ beforeEs s e = S $ beforeEv `switch` en
                       return (ev >>= choose)
         choose (Left _)  = never
         choose (Right x) = return x
-            
+
 
 -- | Delay a behavior by one tick of the ``clock''.
 --
@@ -294,7 +296,7 @@ delay ::  EvStream x -- ^ The event stream that functions as the ``clock''
           -> Behavior (Behavior a)
 delay s i b = loop i where
   loop i =
-           do e <- futuristic $ 
+           do e <- futuristic $
                         do cur <- b
                            e <- getEs s
                            return (cur <$ e)
