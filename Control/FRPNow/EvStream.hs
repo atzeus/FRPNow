@@ -72,6 +72,9 @@ newtype EvStream a = S { getEs :: Behavior (Event [a]) }
 instance Functor EvStream where
   fmap f (S b) = S $ (fmap f <$>) <$> b
 
+instance Semigroup (EvStream a) where
+  (<>) = merge
+
 instance Monoid (EvStream a) where
   mempty = emptyEs
   mappend = merge
