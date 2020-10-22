@@ -72,6 +72,9 @@ newtype EvStream a = S { getEs :: Behavior (Event [a]) }
 instance Functor EvStream where
   fmap f (S b) = S $ (fmap f <$>) <$> b
 
+instance Semigroup (EvStream a) where
+  (<>) = merge
+
 instance Monoid (EvStream a) where
   mempty = emptyEs
   mappend = merge
@@ -309,7 +312,7 @@ callbackStream = do mv <- sync $ newIORef ([], Nothing)
                     return (S s, func mv) where
   loop :: IORef ( [a], Maybe (() -> IO ()) ) -> Now ([a], Behavior (Event [a]))
   loop mv =
-         do (l, Nothing) <- sync $ readIORef mv
+         do (l, _) <- sync $ readIORef mv
             (e,cb) <- callback
             sync $ writeIORef mv ([], Just cb)
             es <- planNow $ loop mv <$ e
